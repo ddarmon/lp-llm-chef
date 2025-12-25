@@ -1,0 +1,28 @@
+# Bulking (Muscle Building) Profile
+# Caloric surplus, very high protein, high carbs
+
+name: bulking
+description: "2800-3200 cal target, 180g protein minimum, high carbs"
+
+calories:
+  min: 2800
+  max: 3200
+
+nutrients:
+  protein:
+    min: 180
+  carbohydrate:
+    min: 350
+  fiber:
+    min: 35
+  calcium:
+    min: 1000
+
+exclude_tags:
+  - exclude
+
+options:
+  max_grams_per_food: 600
+  use_quadratic_penalty: true
+  lambda_cost: 1.0
+  lambda_deviation: 0.0005

@@ -1,0 +1,41 @@
+# Maintenance Profile
+# Balanced macros, focus on micronutrients
+
+name: maintenance
+description: "2200-2400 cal, balanced macros, comprehensive micronutrients"
+
+calories:
+  min: 2200
+  max: 2400
+
+nutrients:
+  protein:
+    min: 120
+  fiber:
+    min: 30
+  vitamin_d:
+    min: 20
+  vitamin_b12:
+    min: 2.4
+  iron:
+    min: 18
+  magnesium:
+    min: 400
+  potassium:
+    min: 3500
+  sodium:
+    max: 2300
+  saturated_fat:
+    max: 22
+  sugar:
+    max: 50
+
+exclude_tags:
+  - exclude
+  - junk_food
+
+options:
+  max_grams_per_food: 500
+  use_quadratic_penalty: true
+  lambda_cost: 1.0
+  lambda_deviation: 0.001

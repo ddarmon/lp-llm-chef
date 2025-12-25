@@ -1,0 +1,32 @@
+# Cutting (Weight Loss) Profile
+# Aggressive deficit, high protein, moderate carbs
+
+name: cutting
+description: "1600-1800 cal target, 150g protein minimum, low sodium"
+
+calories:
+  min: 1600
+  max: 1800
+
+nutrients:
+  protein:
+    min: 150
+  fiber:
+    min: 30
+  sodium:
+    max: 2300
+  saturated_fat:
+    max: 15
+  sugar:
+    max: 40
+
+exclude_tags:
+  - junk_food
+  - high_sugar
+  - exclude
+
+options:
+  max_grams_per_food: 400
+  use_quadratic_penalty: true
+  lambda_cost: 1.0
+  lambda_deviation: 0.001
