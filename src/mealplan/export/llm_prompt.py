@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from string import Template
 from typing import Optional
@@ -9,6 +10,130 @@ from typing import Optional
 import yaml
 
 from mealplan.optimizer.models import OptimizationResult
+
+
+def clean_food_name(description: str) -> str:
+    """Clean up USDA food descriptions to be more readable.
+
+    Examples:
+        "Fish, salmon, Atlantic, farmed, raw" -> "Salmon"
+        "Beans, black turtle, mature seeds, cooked, boiled, without salt" -> "Black beans"
+        "Egg, whole, raw, fresh" -> "Eggs"
+    """
+    desc = description
+
+    # Common patterns to simplify
+    replacements = [
+        # Remove common suffixes
+        (r",?\s*raw$", ""),
+        (r",?\s*fresh$", ""),
+        (r",?\s*cooked.*$", ""),
+        (r",?\s*boiled.*$", ""),
+        (r",?\s*without salt.*$", ""),
+        (r",?\s*with salt.*$", ""),
+        (r",?\s*drained.*$", ""),
+        (r",?\s*canned.*$", " (canned)"),
+        (r",?\s*mature seeds$", ""),
+        (r"\s*\(Includes foods.*?\)", ""),
+        (r"\s*\(garbanzo beans, bengal gram\)", ""),
+        (r",?\s*year round average$", ""),
+        (r",?\s*all commercial varieties$", ""),
+    ]
+
+    for pattern, replacement in replacements:
+        desc = re.sub(pattern, replacement, desc, flags=re.IGNORECASE)
+
+    # Specific food name simplifications
+    name_map = {
+        "Fish, salmon, Atlantic, farmed": "Salmon",
+        "Fish, salmon": "Salmon",
+        "Fish, tuna, yellowfin": "Tuna",
+        "Fish, tuna": "Tuna",
+        "Fish, cod, Atlantic": "Cod",
+        "Fish, cod": "Cod",
+        "Fish, tilapia": "Tilapia",
+        "Fish, mackerel, Atlantic": "Mackerel",
+        "Fish, mackerel": "Mackerel",
+        "Fish, sardine, Atlantic": "Sardines (canned)",
+        "Fish, sardine": "Sardines",
+        "Crustaceans, shrimp, farm raised": "Shrimp",
+        "Crustaceans, shrimp": "Shrimp",
+        "Egg, whole": "Eggs",
+        "Beans, black turtle": "Black beans",
+        "Beans, pinto": "Pinto beans",
+        "Chickpeas": "Chickpeas",
+        "Lentils, mature seeds": "Lentils",
+        "Lentils": "Lentils",
+        "Oil, olive, extra virgin": "Olive oil",
+        "Oil, olive": "Olive oil",
+        "Nuts, almonds": "Almonds",
+        "Cottage cheese, full fat, large or small curd": "Cottage cheese",
+        "Cottage cheese": "Cottage cheese",
+        "Tomatoes, red, ripe": "Tomatoes",
+        "Peppers, sweet, red": "Red bell peppers",
+        "Peppers, sweet": "Bell peppers",
+        "Garlic": "Garlic",
+        "Onions": "Onions",
+        "Spinach": "Spinach",
+        "Broccoli": "Broccoli",
+        "Kale": "Kale",
+        "Cabbage": "Cabbage",
+        "Cauliflower": "Cauliflower",
+        "Asparagus": "Asparagus",
+        "Avocados": "Avocado",
+        "Sauerkraut": "Sauerkraut",
+        "Hummus, commercial": "Hummus",
+        "Hummus": "Hummus",
+        "Anchovies": "Anchovies",
+    }
+
+    # Try to match against known names (longest match first)
+    for usda_name, simple_name in sorted(name_map.items(), key=lambda x: -len(x[0])):
+        if desc.lower().startswith(usda_name.lower()):
+            return simple_name
+
+    # If no match, just clean up and return
+    # Remove leading category (e.g., "Fish, " or "Nuts, ")
+    if ", " in desc:
+        parts = desc.split(", ")
+        if parts[0].lower() in ("fish", "nuts", "beans", "oil", "egg", "crustaceans"):
+            desc = " ".join(parts[1:]).strip()
+
+    return desc.strip(", ")
+
+
+def clean_food_name_with_context(description: str) -> tuple[str, str]:
+    """Clean up USDA food descriptions while preserving preparation state.
+
+    Returns a tuple of (clean_name, prep_state) where prep_state indicates
+    how the food should be prepared or used.
+
+    Examples:
+        "Fish, salmon, Atlantic, farmed, raw" -> ("Salmon", "raw")
+        "Beans, black turtle, mature seeds, cooked, boiled" -> ("Black beans", "cooked")
+        "Fish, sardine, Atlantic, canned in oil" -> ("Sardines", "canned")
+        "Hummus, commercial" -> ("Hummus", "")
+    """
+    desc_lower = description.lower()
+
+    # Detect preparation state from the original description
+    prep_state = ""
+    if "canned" in desc_lower:
+        prep_state = "canned"
+    elif "cooked" in desc_lower or "boiled" in desc_lower:
+        prep_state = "cooked"
+    elif "raw" in desc_lower or "fresh" in desc_lower:
+        prep_state = "raw"
+
+    # Get the clean name using the existing function
+    clean_name = clean_food_name(description)
+
+    # Remove any prep state that might have been added by clean_food_name
+    # (like "(canned)" which we'll handle separately)
+    clean_name = re.sub(r"\s*\(canned\)\s*", "", clean_name).strip()
+
+    return clean_name, prep_state
+
 
 DEFAULT_TEMPLATE = """# Meal Planning Request
 
@@ -108,15 +233,34 @@ class LLMPromptGenerator:
         Returns:
             Complete prompt ready for LLM input
         """
-        # Build food table
-        food_lines = ["| Food | Daily Amount |", "|------|--------------|"]
-        for food in sorted(result.foods, key=lambda f: -f.grams):
-            amount_str = f"{food.grams:.0f}g"
-            food_lines.append(f"| {food.description} | {amount_str} |")
+        # Build food table with cleaned names
+        # Include weekly totals when planning for multiple days
+        if days > 1:
+            food_lines = [
+                "| Food | Daily Amount | Weekly Total |",
+                "|------|--------------|--------------|",
+            ]
+            for food in sorted(result.foods, key=lambda f: -f.grams):
+                daily = f"{food.grams:.0f}g"
+                weekly = f"{food.grams * days:.0f}g"
+                name = clean_food_name(food.description)
+                food_lines.append(f"| {name} | {daily} | {weekly} |")
 
-        # Add totals
-        total_grams = sum(f.grams for f in result.foods)
-        food_lines.append(f"| **Total** | **{total_grams:.0f}g** |")
+            # Add totals
+            total_grams = sum(f.grams for f in result.foods)
+            food_lines.append(
+                f"| **Total** | **{total_grams:.0f}g** | **{total_grams * days:.0f}g** |"
+            )
+        else:
+            food_lines = ["| Food | Daily Amount |", "|------|--------------|"]
+            for food in sorted(result.foods, key=lambda f: -f.grams):
+                amount_str = f"{food.grams:.0f}g"
+                name = clean_food_name(food.description)
+                food_lines.append(f"| {name} | {amount_str} |")
+
+            # Add totals
+            total_grams = sum(f.grams for f in result.foods)
+            food_lines.append(f"| **Total** | **{total_grams:.0f}g** |")
 
         if result.total_cost:
             food_lines.append(f"\n**Daily Cost:** ${result.total_cost:.2f}")

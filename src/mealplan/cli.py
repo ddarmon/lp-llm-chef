@@ -192,7 +192,10 @@ def optimize(
 ) -> None:
     """Run meal plan optimization."""
     from mealplan.export.formatters import format_result
-    from mealplan.optimizer.constraints import load_profile_from_yaml
+    from mealplan.optimizer.constraints import (
+        deserialize_profile_json,
+        load_profile_from_yaml,
+    )
     from mealplan.optimizer.models import OptimizationRequest
     from mealplan.optimizer.solver import solve_diet_problem
 
@@ -219,10 +222,7 @@ def optimize(
             profile_name = profile_row["name"]
             # Parse stored JSON into request
             constraints_data = json.loads(profile_row["constraints_json"])
-            # For simplicity, we'll reconstruct the YAML and parse it
-            # In production, you'd want a more direct deserialization
-            request = OptimizationRequest()
-            # ... apply constraints from JSON
+            request = deserialize_profile_json(constraints_data)
             console.print(f"[yellow]Loading profile '{profile}' from database[/yellow]")
     else:
         # Use default request
@@ -253,6 +253,16 @@ def optimize(
             )
         else:
             console.print(f"[dim]Found {used_foods} eligible foods[/dim]")
+
+        # Warn if include_tags filter resulted in no foods
+        if request.include_tags and total_foods == 0:
+            tags_str = ", ".join(request.include_tags)
+            console.print(
+                f"[yellow]Warning: No foods found with tags: {tags_str}[/yellow]"
+            )
+            console.print(
+                "[yellow]Use 'mealplan tags add <fdc_id> <tag>' to tag foods first.[/yellow]"
+            )
 
         with console.status("[bold green]Optimizing..."):
             result = solve_diet_problem(request, conn)

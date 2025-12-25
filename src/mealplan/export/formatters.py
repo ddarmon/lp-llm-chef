@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from mealplan.export.llm_prompt import clean_food_name
 from mealplan.optimizer.models import OptimizationResult
 
 
@@ -59,7 +60,7 @@ class TableFormatter:
         total_grams = 0.0
         for food in result.foods:
             food_table.add_row(
-                food.description[:50],
+                clean_food_name(food.description),
                 f"{food.grams:.1f}",
                 f"${food.cost:.2f}",
             )
@@ -202,7 +203,7 @@ class MarkdownFormatter:
         lines.extend(["", "## Foods", "", "| Food | Amount | Cost |", "|------|--------|------|"])
 
         for food in result.foods:
-            lines.append(f"| {food.description} | {food.grams:.0f}g | ${food.cost:.2f} |")
+            lines.append(f"| {clean_food_name(food.description)} | {food.grams:.0f}g | ${food.cost:.2f} |")
 
         lines.extend(
             [

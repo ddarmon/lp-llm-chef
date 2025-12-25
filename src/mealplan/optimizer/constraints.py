@@ -355,3 +355,78 @@ def load_profile_from_yaml(yaml_path: Path) -> OptimizationRequest:
         request.max_foods = int(options["max_foods"])
 
     return request
+
+
+def deserialize_profile_json(data: dict) -> OptimizationRequest:
+    """Convert a JSON/dict profile into an OptimizationRequest.
+
+    This is the dict-based equivalent of load_profile_from_yaml(),
+    used when loading profiles from the database.
+
+    Args:
+        data: Profile data as a dictionary (parsed from JSON)
+
+    Returns:
+        OptimizationRequest configured from the data
+    """
+    request = OptimizationRequest()
+
+    # Parse calorie range
+    if "calories" in data:
+        cal_data = data["calories"]
+        request.calorie_range = (
+            float(cal_data.get("min", 0)),
+            float(cal_data.get("max", 10000)),
+        )
+
+    # Parse nutrient constraints
+    if "nutrients" in data:
+        for nutrient_name, bounds in data["nutrients"].items():
+            nutrient_id = get_nutrient_id(nutrient_name)
+            min_val = bounds.get("min")
+            max_val = bounds.get("max")
+
+            # Convert to float if present
+            if min_val is not None:
+                min_val = float(min_val)
+            if max_val is not None:
+                max_val = float(max_val)
+
+            request.nutrient_constraints.append(
+                NutrientConstraint(
+                    nutrient_id=nutrient_id,
+                    min_value=min_val,
+                    max_value=max_val,
+                )
+            )
+
+    # Parse tags
+    request.exclude_tags = data.get("exclude_tags", [])
+    request.include_tags = data.get("include_tags", [])
+
+    # Parse per-food limits
+    if "per_food_limits" in data:
+        for fdc_id_str, max_grams in data["per_food_limits"].items():
+            request.food_constraints.append(
+                FoodConstraint(
+                    fdc_id=int(fdc_id_str),
+                    max_grams=float(max_grams),
+                )
+            )
+
+    # Parse options
+    options = data.get("options", {})
+    if "max_grams_per_food" in options:
+        request.max_grams_per_food = float(options["max_grams_per_food"])
+    if "use_quadratic_penalty" in options:
+        request.use_quadratic_penalty = bool(options["use_quadratic_penalty"])
+    if "lambda_cost" in options:
+        request.lambda_cost = float(options["lambda_cost"])
+    if "lambda_deviation" in options:
+        request.lambda_deviation = float(options["lambda_deviation"])
+    if "mode" in options:
+        request.mode = str(options["mode"])
+    if "max_foods" in options:
+        request.max_foods = int(options["max_foods"])
+
+    return request

@@ -24,6 +24,12 @@ include_tags:
 exclude_tags:
   - exclude
 
+# Per-food limits for condiments/seasonings (prevent crazy amounts)
+per_food_limits:
+  169230: 15   # Garlic - max 15g/day (~4 cloves)
+  748608: 45   # Olive oil - max 45g/day (~3 tbsp)
+  170000: 100  # Onions - max 100g/day (1 medium onion)
+
 options:
   max_grams_per_food: 400
   use_quadratic_penalty: true
