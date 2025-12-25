@@ -63,6 +63,7 @@ mealplan optimize --minimize-cost   # Run with cost minimization
 mealplan optimize --max-foods 500   # Increase food pool (default 300)
 mealplan optimize --profile <name>  # Use a constraint profile
 mealplan optimize --file <yaml>     # Use YAML file directly
+mealplan optimize --verbose         # Show KKT optimality conditions
 mealplan export-for-llm latest      # Generate Claude prompt from last run
 mealplan prices add <fdc_id> <price>
 mealplan tags add <fdc_id> <tag>
@@ -159,8 +160,13 @@ Example profiles in `examples/constraints/`:
 -   **Raw sqlite3 over SQLAlchemy**: Simpler, fewer dependencies, direct
     SQL control
 -   **scipy.optimize over cvxpy**: Fewer dependencies; `linprog` with
-    HiGHS for LP, `minimize` with SLSQP for QP
+    HiGHS for LP, `minimize` with SLSQP for QP. Requires scipy 1.16+
+    for native Lagrange multiplier support in SLSQP.
 -   **All values per 100g**: Matches USDA data format; divide by 100
     when building per-gram matrices
 -   **`from __future__ import annotations`**: Required in all files for
-    Python 3.9 compatibility with generic type hints
+    forward reference compatibility
+-   **KKT analysis**: The `--verbose` flag displays Karush-Kuhn-Tucker
+    optimality conditions (primal/dual feasibility, complementary
+    slackness, stationarity) with Lagrange multipliers for binding
+    constraints

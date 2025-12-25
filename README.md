@@ -25,17 +25,27 @@ the optimized food list.
 
 ## Installation
 
-Requires Python 3.9+.
+Requires Python 3.11+ and scipy 1.16+.
 
 ``` bash
 git clone https://github.com/yourusername/lp-llm-chef.git
 cd lp-llm-chef
+
+# Using uv (recommended)
+uv sync
+uv run mealplan --help
+
+# Or with pip
 pip install -e .
 ```
 
 For development:
 
 ``` bash
+uv sync
+uv pip install pytest ruff mypy
+
+# Or with pip
 pip install -e ".[dev]"
 ```
 
@@ -92,6 +102,9 @@ mealplan optimize --max-foods 500
 # Output as JSON or Markdown
 mealplan optimize --output json
 mealplan optimize --output markdown
+
+# Show KKT optimality conditions (verify solution is optimal)
+mealplan optimize --verbose
 ```
 
 ### 4. Add Prices (Optional, for Cost Minimization)
@@ -277,6 +290,8 @@ This ensures optimization only suggests foods you actually buy and cook with.
   `mealplan info <fdc_id>`           Show nutrients for a food
 
   `mealplan optimize`                Run optimization
+
+  `mealplan optimize --verbose`      Show KKT optimality conditions
 
   `mealplan export-for-llm <id>`     Generate LLM prompt (use `latest` for
                                      last run)

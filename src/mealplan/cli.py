@@ -196,6 +196,9 @@ def optimize(
     max_foods: int = typer.Option(
         300, "--max-foods", help="Maximum foods to consider (randomly sampled if exceeded)"
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Display KKT optimality conditions"
+    ),
 ) -> None:
     """Run meal plan optimization."""
     from mealplan.export.formatters import format_result
@@ -272,7 +275,7 @@ def optimize(
             )
 
         with console.status("[bold green]Optimizing..."):
-            result = solve_diet_problem(request, conn)
+            result = solve_diet_problem(request, conn, verbose=verbose)
 
     # Save to history if requested
     run_id: Optional[int] = None
@@ -294,6 +297,14 @@ def optimize(
     formatted = format_result(result, output, profile_name, run_id, console)
     if formatted:
         console.print(formatted)
+
+    # Display KKT analysis if verbose mode is enabled
+    if verbose and result.success and result.kkt_analysis:
+        from mealplan.export.formatters import KKTFormatter
+
+        console.print()  # Blank line before KKT section
+        kkt_formatter = KKTFormatter(console)
+        kkt_formatter.format(result.kkt_analysis)
 
 
 @app.command("export-for-llm")

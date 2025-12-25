@@ -87,6 +87,32 @@ class NutrientResult:
 
 
 @dataclass
+class ConstraintKKT:
+    """KKT analysis for a single constraint."""
+
+    name: str  # Human-readable name, e.g., "Protein (min)"
+    constraint_type: str  # "nutrient_min", "nutrient_max", "food_lower", "food_upper"
+    bound: float  # The constraint bound value
+    value: float  # Actual value at solution
+    slack: float  # Distance from bound (0 = binding)
+    multiplier: Optional[float]  # Lagrange multiplier (shadow price)
+    is_binding: bool  # True if |slack| < tolerance
+
+
+@dataclass
+class KKTAnalysis:
+    """Complete KKT conditions analysis for verifying optimality."""
+
+    solver_type: str  # "lp_highs", "qp_slsqp", "qp_feasibility"
+    primal_feasible: bool  # All constraints satisfied
+    dual_feasible: bool  # All multipliers >= 0 for inequality constraints
+    complementary_slackness_satisfied: bool  # slack * multiplier ≈ 0
+    stationarity_residual: float  # ||∇L(x*)|| at optimum
+    nutrient_constraints: list[ConstraintKKT]  # All nutrient constraint analyses
+    binding_food_bounds: list[ConstraintKKT]  # Foods at their limits
+
+
+@dataclass
 class OptimizationResult:
     """Complete output from the optimizer."""
 
@@ -97,6 +123,7 @@ class OptimizationResult:
     total_cost: Optional[float]
     nutrients: list[NutrientResult]
     solver_info: dict  # iterations, time, etc.
+    kkt_analysis: Optional[KKTAnalysis] = None  # Populated when --verbose is used
 
 
 # Custom exceptions
