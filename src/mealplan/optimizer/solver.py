@@ -7,7 +7,9 @@ import time
 from typing import Any
 
 import numpy as np
-from scipy.optimize import linprog, minimize
+from qpsolvers import Problem, solve_problem
+from scipy.optimize import linprog
+from scipy.sparse import csc_matrix, diags
 
 from mealplan.db.queries import NutrientQueries
 from mealplan.optimizer.constraints import ConstraintBuilder
@@ -124,12 +126,14 @@ def solve_qp(
     lambda_deviation: float = 0.001,
     return_kkt: bool = False,
 ) -> dict[str, Any]:
-    """Solve quadratic programming problem using scipy.optimize.minimize with SLSQP.
+    """Solve quadratic programming problem using qpsolvers with Clarabel.
 
     Objective: min lambda_cost * c'x + lambda_deviation * ||x - x_bar||^2
 
     The quadratic penalty encourages solutions that don't deviate too far from
     typical consumption patterns, producing more diverse/palatable meal plans.
+
+    Uses Clarabel interior-point solver for high precision and proper KKT multipliers.
 
     Args:
         costs: Cost per gram for each food, shape (n_foods,)
@@ -146,119 +150,118 @@ def solve_qp(
         Dict with solution info (and KKT data if return_kkt=True)
     """
     start_time = time.time()
+    n_foods = len(costs)
+    n_nutrients = nutrient_matrix.shape[1]
 
-    def objective(x: np.ndarray) -> float:
-        cost_term = lambda_cost * np.dot(costs, x)
-        deviation_term = lambda_deviation * np.sum((x - typical_consumption) ** 2)
-        return cost_term + deviation_term
+    # Build QP in standard form: min 0.5 * x'Px + q'x
+    # Our objective: lambda_cost * c'x + lambda_deviation * ||x - x_bar||^2
+    #              = lambda_cost * c'x + lambda_deviation * (x'x - 2*x_bar'x + x_bar'x_bar)
+    #              = lambda_deviation * x'Ix + (lambda_cost * c - 2*lambda_deviation*x_bar)'x + const
+    # Standard form: 0.5 * x'Px + q'x
+    # So: P = 2 * lambda_deviation * I, q = lambda_cost * c - 2 * lambda_deviation * x_bar
 
-    def objective_grad(x: np.ndarray) -> np.ndarray:
-        return lambda_cost * costs + 2 * lambda_deviation * (x - typical_consumption)
+    # Use sparse diagonal matrix for P (Clarabel expects sparse CSC format)
+    P = diags([2 * lambda_deviation] * n_foods, format="csc")
+    q = lambda_cost * costs - 2 * lambda_deviation * typical_consumption
 
-    # Build constraints as list of dicts
-    constraints = []
-    # Track constraint mapping for KKT analysis
-    constraint_map = []  # List of (nutrient_index, "min"|"max")
+    # Build inequality constraints: G @ x <= h
+    # Min constraint: Ax >= min  =>  -Ax <= -min
+    # Max constraint: Ax <= max  =>   Ax <= max
+    G_rows = []
+    h_rows = []
+    constraint_map = []  # Track (nutrient_index, "min"|"max") for KKT analysis
 
-    for j in range(nutrient_matrix.shape[1]):
-        col = nutrient_matrix[:, j].copy()
+    for j in range(n_nutrients):
+        col = nutrient_matrix[:, j]
 
         if nutrient_mins[j] > -np.inf:
-            min_val = nutrient_mins[j]
-            # Constraint: Ax >= min  =>  Ax - min >= 0
-            constraints.append(
-                {
-                    "type": "ineq",
-                    "fun": lambda x, c=col, m=min_val: np.dot(c, x) - m,
-                    "jac": lambda x, c=col: c,
-                }
-            )
+            G_rows.append(-col)  # -A @ x <= -min
+            h_rows.append(-nutrient_mins[j])
             constraint_map.append((j, "min"))
 
         if nutrient_maxs[j] < np.inf:
-            max_val = nutrient_maxs[j]
-            # Constraint: Ax <= max  =>  max - Ax >= 0
-            constraints.append(
-                {
-                    "type": "ineq",
-                    "fun": lambda x, c=col, m=max_val: m - np.dot(c, x),
-                    "jac": lambda x, c=col: -c,
-                }
-            )
+            G_rows.append(col)  # A @ x <= max
+            h_rows.append(nutrient_maxs[j])
             constraint_map.append((j, "max"))
 
-    # Initial guess: midpoint of bounds, clipped toward typical
-    x0 = np.array([(b[0] + b[1]) / 2 for b in food_bounds])
-    x0 = np.minimum(x0, typical_consumption * 1.5)
-    x0 = np.maximum(x0, 0.1)
+    # Convert G to sparse CSC format for Clarabel
+    G = csc_matrix(np.array(G_rows)) if G_rows else None
+    h = np.array(h_rows) if h_rows else None
 
-    result = minimize(
-        objective,
-        x0,
-        method="SLSQP",
-        jac=objective_grad,
-        constraints=constraints,
-        bounds=food_bounds,
-        options={"maxiter": 1000, "ftol": 1e-9, "disp": False},
-    )
+    # Extract bounds
+    lb = np.array([b[0] for b in food_bounds])
+    ub = np.array([b[1] for b in food_bounds])
+
+    # Solve with Clarabel interior-point solver
+    problem = Problem(P, q, G, h, lb=lb, ub=ub)
+    solution = solve_problem(problem, solver="clarabel")
 
     elapsed = time.time() - start_time
 
+    success = solution.found if solution is not None else False
+    x = solution.x if success else None
+
+    # Compute objective value
+    fun = None
+    if success and x is not None:
+        fun = float(0.5 * x @ P @ x + q @ x)
+
     ret = {
-        "success": result.success,
-        "x": result.x if result.success else None,
-        "fun": result.fun if result.success else None,
-        "message": result.message,
-        "iterations": getattr(result, "nit", None),
+        "success": success,
+        "x": x,
+        "fun": fun,
+        "message": "Optimization successful" if success else "Optimization failed",
+        "iterations": None,  # Clarabel doesn't report iterations in the same way
         "elapsed_seconds": elapsed,
     }
 
-    if return_kkt and result.success:
-        x = result.x
-        # scipy 1.16+ returns KKT multipliers in result.multipliers
-        # Format: m[:meq] for equality, m[meq:] for inequality constraints
-        # We have no equality constraints, so all are inequality
-        multipliers = getattr(result, "multipliers", None)
+    if return_kkt and success:
+        # qpsolvers returns:
+        # - z: dual multipliers for inequality constraints (G @ x <= h)
+        # - z_box: dual multipliers for box constraints (lb <= x <= ub)
+        z = solution.z if solution.z is not None else np.zeros(len(h_rows))
+        z_box = solution.z_box if solution.z_box is not None else np.zeros(n_foods)
 
-        # Compute constraint values at solution for slack calculation
+        # Build constraint values for KKT display
         constraint_values = []
-        multiplier_idx = 0
-        for j in range(nutrient_matrix.shape[1]):
-            col = nutrient_matrix[:, j]
+        for i, (nutrient_idx, constraint_type) in enumerate(constraint_map):
+            col = nutrient_matrix[:, nutrient_idx]
             nutrient_value = float(np.dot(col, x))
 
-            if nutrient_mins[j] > -np.inf:
-                mult = None
-                if multipliers is not None and multiplier_idx < len(multipliers):
-                    mult = float(multipliers[multiplier_idx])
-                    multiplier_idx += 1
-                constraint_values.append({
-                    "type": "min",
-                    "nutrient_index": j,
-                    "bound": float(nutrient_mins[j]),
-                    "value": nutrient_value,
-                    "slack": nutrient_value - nutrient_mins[j],
-                    "multiplier": mult,
-                })
-            if nutrient_maxs[j] < np.inf:
-                mult = None
-                if multipliers is not None and multiplier_idx < len(multipliers):
-                    mult = float(multipliers[multiplier_idx])
-                    multiplier_idx += 1
-                constraint_values.append({
-                    "type": "max",
-                    "nutrient_index": j,
-                    "bound": float(nutrient_maxs[j]),
-                    "value": nutrient_value,
-                    "slack": nutrient_maxs[j] - nutrient_value,
-                    "multiplier": mult,
-                })
+            if constraint_type == "min":
+                bound = float(nutrient_mins[nutrient_idx])
+                slack = nutrient_value - bound
+                # For -Ax <= -min, the multiplier z[i] >= 0 when active
+                # This corresponds to the min constraint being tight
+                mult = float(z[i]) if z is not None else None
+            else:  # "max"
+                bound = float(nutrient_maxs[nutrient_idx])
+                slack = bound - nutrient_value
+                # For Ax <= max, the multiplier z[i] >= 0 when active
+                mult = float(z[i]) if z is not None else None
+
+            constraint_values.append({
+                "type": constraint_type,
+                "nutrient_index": nutrient_idx,
+                "bound": bound,
+                "value": nutrient_value,
+                "slack": slack,
+                "multiplier": mult,
+            })
+
+        # Compute objective gradient for stationarity check
+        # ∇f = ∂/∂x [0.5 x'Px + q'x] = Px + q = 2*lambda_deviation*x + q
+        objective_grad = P @ x + q
 
         ret["kkt"] = {
-            "multipliers": multipliers,
+            "z": z,                      # Inequality constraint multipliers
+            "z_box": z_box,              # Bound multipliers (key improvement!)
             "constraint_values": constraint_values,
             "constraint_map": constraint_map,
-            "objective_grad": objective_grad(x),
+            "objective_grad": objective_grad,
+            "G": G.toarray() if G is not None else None,  # Dense for KKT computation
+            "primal_residual": solution.primal_residual() if hasattr(solution, 'primal_residual') else None,
+            "dual_residual": solution.dual_residual() if hasattr(solution, 'dual_residual') else None,
         }
 
     return ret
@@ -277,7 +280,7 @@ def build_kkt_analysis(
 
     Args:
         solver_result: Result dict from solve_lp or solve_qp with kkt data
-        solver_type: "lp_highs", "qp_slsqp", or "qp_feasibility"
+        solver_type: "lp_highs", "qp_clarabel", or "qp_feasibility"
         constraint_data: The constraint_data dict from ConstraintBuilder
         nutrient_names: Mapping of nutrient_id -> (name, unit)
         x: Solution vector
@@ -368,8 +371,9 @@ def build_kkt_analysis(
                     )
 
     else:
-        # QP solver - use scipy 1.16+ native multipliers
+        # QP solver - use qpsolvers with Clarabel (provides z and z_box multipliers)
         constraint_values = kkt_data.get("constraint_values", [])
+        z_box = kkt_data.get("z_box")  # Bound multipliers from Clarabel
 
         for cv in constraint_values:
             nutrient_idx = cv["nutrient_index"]
@@ -384,7 +388,7 @@ def build_kkt_analysis(
 
             is_binding = abs(cv["slack"]) < tolerance
 
-            # Use scipy's native multiplier
+            # Use qpsolvers multiplier (z values for inequality constraints)
             multiplier = cv.get("multiplier")
 
             nutrient_constraints.append(
@@ -399,10 +403,16 @@ def build_kkt_analysis(
                 )
             )
 
-        # Check food bounds for QP (bound multipliers not returned by scipy)
+        # Check food bounds for QP - now we have z_box from Clarabel!
+        # z_box[i] < 0: at lower bound (multiplier for lb constraint)
+        # z_box[i] = 0: interior (no active bound)
+        # z_box[i] > 0: at upper bound (multiplier for ub constraint)
         for i, (lb, ub) in enumerate(food_bounds):
             food_val = float(x[i])
+            bound_mult = float(z_box[i]) if z_box is not None else None
+
             if food_val - lb < tolerance:
+                # At lower bound - z_box should be negative (pushing up)
                 binding_food_bounds.append(
                     ConstraintKKT(
                         name=food_descriptions[i][:50],
@@ -410,11 +420,12 @@ def build_kkt_analysis(
                         bound=lb,
                         value=food_val,
                         slack=food_val - lb,
-                        multiplier=None,
+                        multiplier=bound_mult,
                         is_binding=True,
                     )
                 )
             if ub - food_val < tolerance:
+                # At upper bound - z_box should be positive (pushing down)
                 binding_food_bounds.append(
                     ConstraintKKT(
                         name=food_descriptions[i][:50],
@@ -422,7 +433,7 @@ def build_kkt_analysis(
                         bound=ub,
                         value=food_val,
                         slack=ub - food_val,
-                        multiplier=None,
+                        multiplier=bound_mult,
                         is_binding=True,
                     )
                 )
@@ -449,47 +460,36 @@ def build_kkt_analysis(
                 break
 
     # 4. Stationarity: compute ||∇L(x*)||
-    # For interior variables (not at bounds): ∇L_i = 0
-    # For variables at bounds: ∇L_i has appropriate sign (handled by bound multipliers)
+    # Full KKT stationarity: ∇f + G'z + z_box = 0
     stationarity_residual = 0.0
     if solver_type == "lp_highs":
         # Stationarity is automatically satisfied by LP solver
         stationarity_residual = 0.0
     else:
-        # For QP, compute ∇L = ∇f + Σ λᵢ∇gᵢ using scipy's multipliers
+        # For QP with Clarabel, compute full stationarity using all multipliers
+        # ∇L = ∇f + G'z + z_box (should equal 0 at optimum)
         obj_grad = kkt_data.get("objective_grad")
-        constraint_values = kkt_data.get("constraint_values", [])
+        G = kkt_data.get("G")
+        z = kkt_data.get("z")
+        z_box = kkt_data.get("z_box")
+
         if obj_grad is not None:
             lagrangian_grad = obj_grad.copy()
-            # Add contribution from each constraint
-            for cv in constraint_values:
-                mult = cv.get("multiplier")
-                if mult is not None and mult != 0:
-                    nutrient_idx = cv["nutrient_index"]
-                    col = nutrient_matrix[:, nutrient_idx]
-                    if cv["type"] == "min":
-                        # ∇g = A for (Ax - min >= 0)
-                        lagrangian_grad += mult * col
-                    else:
-                        # ∇g = -A for (max - Ax >= 0)
-                        lagrangian_grad += mult * (-col)
 
-            # Only check stationarity for interior variables (not at bounds)
-            # Variables at bounds have non-zero bound multipliers that balance the gradient
-            interior_mask = np.ones(len(x), dtype=bool)
-            for i, (lb, ub) in enumerate(food_bounds):
-                if x[i] - lb < tolerance or ub - x[i] < tolerance:
-                    interior_mask[i] = False
+            # Add contribution from inequality constraints: G'z
+            # Note: G is formulated as G @ x <= h, so for the Lagrangian:
+            # L = f(x) + z'(Gx - h), and ∇L_x = ∇f + G'z
+            if G is not None and z is not None:
+                lagrangian_grad += G.T @ z
 
-            n_interior = np.sum(interior_mask)
-            if n_interior > 0:
-                # Compute RMS (root mean square) of gradient for interior variables
-                # This gives a per-variable measure that's comparable across problem sizes
-                interior_grad = lagrangian_grad[interior_mask]
-                stationarity_residual = float(np.sqrt(np.mean(interior_grad**2)))
-            else:
-                # All variables at bounds - stationarity is satisfied via bound multipliers
-                stationarity_residual = 0.0
+            # Add contribution from box constraints: z_box
+            # For lb <= x <= ub, the Lagrangian includes bound multipliers
+            if z_box is not None:
+                lagrangian_grad += z_box
+
+            # Now we can compute stationarity for ALL variables (not just interior)
+            # because we have the full multiplier information
+            stationarity_residual = float(np.linalg.norm(lagrangian_grad))
 
     return KKTAnalysis(
         solver_type=solver_type,
@@ -569,7 +569,7 @@ def solve_diet_problem(
             lambda_deviation=request.lambda_deviation,
             return_kkt=verbose,
         )
-        solver_type = "qp_slsqp"
+        solver_type = "qp_clarabel"
     else:
         # Pure LP cost minimization
         result = solve_lp(
