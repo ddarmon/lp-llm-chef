@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from mealplan.export.llm_prompt import clean_food_name
-from mealplan.optimizer.models import OptimizationResult
+from mealplan.optimizer.models import KKTAnalysis, OptimizationResult
 
 
 class TableFormatter:
@@ -228,6 +228,120 @@ class MarkdownFormatter:
             lines.append(f"| {n.name} | {n.amount:.1f} {n.unit}{status} | {target} |")
 
         return "\n".join(lines)
+
+
+class KKTFormatter:
+    """Format KKT analysis for terminal display."""
+
+    def __init__(self, console: Optional[Console] = None):
+        """Initialize the formatter.
+
+        Args:
+            console: Rich console for output. If None, creates a new one.
+        """
+        self.console = console or Console()
+
+    def format(self, kkt: KKTAnalysis) -> None:
+        """Display KKT analysis with Rich tables.
+
+        Args:
+            kkt: KKT analysis to format
+        """
+        # Summary panel
+        def status_str(ok: bool) -> str:
+            return "[green]Satisfied[/green]" if ok else "[red]Violated[/red]"
+
+        # Check if we have multiplier data
+        has_multipliers = any(
+            c.multiplier is not None for c in kkt.nutrient_constraints
+        )
+
+        status_lines = [
+            f"[bold]Solver:[/bold] {kkt.solver_type}",
+            "",
+            f"[bold]1. Primal Feasibility:[/bold] {status_str(kkt.primal_feasible)}",
+            "   (All constraints satisfied: g(x*) ≤ 0)",
+            "",
+            f"[bold]2. Dual Feasibility:[/bold] {status_str(kkt.dual_feasible)}",
+            "   (All multipliers λ ≥ 0 for inequality constraints)",
+            "",
+            f"[bold]3. Complementary Slackness:[/bold] {status_str(kkt.complementary_slackness_satisfied)}",
+            "   (λᵢ · gᵢ(x*) = 0 for all constraints)",
+            "",
+            f"[bold]4. Stationarity:[/bold] RMS(∇L) = {kkt.stationarity_residual:.2e}",
+            "   (∇f(x*) + Σ λᵢ∇gᵢ(x*) = 0 for interior variables)",
+        ]
+
+        # Add note about bound multipliers
+        if kkt.solver_type in ("qp_feasibility", "qp_slsqp") and kkt.binding_food_bounds:
+            status_lines.extend([
+                "",
+                "[dim]Note: Bound multipliers (foods at limits) not included in stationarity.[/dim]",
+            ])
+
+        self.console.print(Panel("\n".join(status_lines), title="KKT Optimality Conditions"))
+
+        # Binding nutrient constraints table
+        binding_constraints = [c for c in kkt.nutrient_constraints if c.is_binding]
+        non_binding_count = len(kkt.nutrient_constraints) - len(binding_constraints)
+
+        if binding_constraints:
+            binding_table = Table(title="Binding Nutrient Constraints (Active)")
+            binding_table.add_column("Constraint", style="cyan")
+            binding_table.add_column("Bound", justify="right")
+            binding_table.add_column("Value", justify="right")
+            binding_table.add_column("Slack", justify="right")
+            binding_table.add_column("Multiplier (λ)", justify="right")
+
+            for c in binding_constraints:
+                mult_str = f"{c.multiplier:.4f}" if c.multiplier is not None else "[dim]N/A[/dim]"
+                binding_table.add_row(
+                    c.name,
+                    f"{c.bound:.2f}",
+                    f"{c.value:.2f}",
+                    f"{c.slack:.2e}",
+                    mult_str,
+                )
+
+            self.console.print(binding_table)
+        else:
+            self.console.print("[dim]No binding nutrient constraints[/dim]")
+
+        if non_binding_count > 0:
+            self.console.print(f"[dim]{non_binding_count} non-binding nutrient constraints[/dim]")
+
+        # Foods at bounds
+        if kkt.binding_food_bounds:
+            upper_bounds = [c for c in kkt.binding_food_bounds if c.constraint_type == "food_upper"]
+            lower_bounds = [c for c in kkt.binding_food_bounds if c.constraint_type == "food_lower"]
+
+            if upper_bounds:
+                food_table = Table(title=f"Foods at Upper Bound ({len(upper_bounds)} foods)")
+                food_table.add_column("Food", style="cyan", max_width=45)
+                food_table.add_column("Limit", justify="right")
+                food_table.add_column("Amount", justify="right")
+                food_table.add_column("Multiplier", justify="right")
+
+                # Show up to 10
+                for c in upper_bounds[:10]:
+                    mult_str = f"{c.multiplier:.4f}" if c.multiplier is not None else "[dim]N/A[/dim]"
+                    food_table.add_row(
+                        c.name,
+                        f"{c.bound:.1f}g",
+                        f"{c.value:.1f}g",
+                        mult_str,
+                    )
+
+                if len(upper_bounds) > 10:
+                    food_table.add_row(
+                        f"[dim]... and {len(upper_bounds) - 10} more[/dim]",
+                        "", "", "",
+                    )
+
+                self.console.print(food_table)
+
+            if lower_bounds:
+                self.console.print(f"[dim]{len(lower_bounds)} foods at lower bound (0g)[/dim]")
 
 
 def format_result(

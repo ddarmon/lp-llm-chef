@@ -2,11 +2,11 @@
 name = "mealplan"
 version = "0.1.0"
 description = "Personal meal planning optimization with LP/QP"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 
 dependencies = [
     "numpy>=1.24",
-    "scipy>=1.11",
+    "scipy>=1.16",
     "pandas>=2.0",
     "typer[all]>=0.9",
     "rich>=13.0",
