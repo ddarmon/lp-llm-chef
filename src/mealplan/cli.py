@@ -317,17 +317,48 @@ def export_for_llm(
     # Parse the stored result
     result_data = json.loads(run["result_json"])
 
+    # Fetch per-food nutrient data from database
+    # Nutrient IDs: 1008=Kcal, 1003=Protein, 1005=Carbs, 1004=Fat
+    macro_nutrient_ids = [1008, 1003, 1005, 1004]
+    food_nutrients_map: dict[int, dict[int, float]] = {}
+
+    with db.get_connection() as conn:
+        fdc_ids = [f["fdc_id"] for f in result_data["solution"]["foods"]]
+        if fdc_ids:
+            placeholders = ",".join("?" * len(fdc_ids))
+            nutrient_placeholders = ",".join("?" * len(macro_nutrient_ids))
+            cursor = conn.execute(
+                f"""
+                SELECT fdc_id, nutrient_id, amount / 100.0 as amount_per_gram
+                FROM food_nutrients
+                WHERE fdc_id IN ({placeholders})
+                  AND nutrient_id IN ({nutrient_placeholders})
+                """,
+                fdc_ids + macro_nutrient_ids,
+            )
+            for row in cursor.fetchall():
+                fdc_id, nutrient_id, amount_per_gram = row
+                if fdc_id not in food_nutrients_map:
+                    food_nutrients_map[fdc_id] = {}
+                food_nutrients_map[fdc_id][nutrient_id] = amount_per_gram
+
     # Reconstruct OptimizationResult from JSON
-    foods = [
-        FoodResult(
-            fdc_id=f["fdc_id"],
-            description=f["description"],
-            grams=f["grams"],
-            cost=f["cost"],
-            nutrients={},
+    foods = []
+    for f in result_data["solution"]["foods"]:
+        fdc_id = f["fdc_id"]
+        grams = f["grams"]
+        # Calculate nutrient amounts based on grams
+        per_gram = food_nutrients_map.get(fdc_id, {})
+        nutrients = {nid: per_gram.get(nid, 0.0) * grams for nid in macro_nutrient_ids}
+        foods.append(
+            FoodResult(
+                fdc_id=fdc_id,
+                description=f["description"],
+                grams=grams,
+                cost=f["cost"],
+                nutrients=nutrients,
+            )
         )
-        for f in result_data["solution"]["foods"]
-    ]
 
     nutrients = [
         NutrientResult(

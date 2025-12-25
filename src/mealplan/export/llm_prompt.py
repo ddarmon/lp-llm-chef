@@ -141,6 +141,9 @@ DEFAULT_TEMPLATE = """# Meal Planning Request
 
 $FOOD_TABLE
 
+## Preparation Notes
+$PREPARATION_NOTES
+
 ## My Preferences
 
 - Cuisine styles I enjoy: $CUISINES
@@ -233,39 +236,71 @@ class LLMPromptGenerator:
         Returns:
             Complete prompt ready for LLM input
         """
-        # Build food table with cleaned names
-        # Include weekly totals when planning for multiple days
-        if days > 1:
-            food_lines = [
-                "| Food | Daily Amount | Weekly Total |",
-                "|------|--------------|--------------|",
-            ]
-            for food in sorted(result.foods, key=lambda f: -f.grams):
-                daily = f"{food.grams:.0f}g"
-                weekly = f"{food.grams * days:.0f}g"
-                name = clean_food_name(food.description)
-                food_lines.append(f"| {name} | {daily} | {weekly} |")
+        # Build food table with macros and preparation context
+        # Nutrient IDs: 1008=Kcal, 1003=Protein, 1005=Carbs, 1004=Fat
+        food_lines = [
+            "| Food | Amount (g) | Kcal | Protein (g) | Carbs (g) | Fat (g) |",
+            "|------|------------|------|-------------|-----------|---------|",
+        ]
 
-            # Add totals
-            total_grams = sum(f.grams for f in result.foods)
+        # Track prep states for generating notes
+        prep_states: dict[str, list[str]] = {"raw": [], "cooked": [], "canned": []}
+
+        # Calculate totals
+        total_grams = 0.0
+        total_kcal = 0.0
+        total_protein = 0.0
+        total_carbs = 0.0
+        total_fat = 0.0
+
+        for food in sorted(result.foods, key=lambda f: -f.grams):
+            name, prep_state = clean_food_name_with_context(food.description)
+            display_name = f"{name} ({prep_state})" if prep_state else name
+
+            # Track prep states for notes
+            if prep_state in prep_states:
+                prep_states[prep_state].append(name)
+
+            # Get nutrient values
+            kcal = food.nutrients.get(1008, 0.0)
+            protein = food.nutrients.get(1003, 0.0)
+            carbs = food.nutrients.get(1005, 0.0)
+            fat = food.nutrients.get(1004, 0.0)
+
+            # Accumulate totals
+            total_grams += food.grams
+            total_kcal += kcal
+            total_protein += protein
+            total_carbs += carbs
+            total_fat += fat
+
             food_lines.append(
-                f"| **Total** | **{total_grams:.0f}g** | **{total_grams * days:.0f}g** |"
+                f"| {display_name} | {food.grams:.0f} | {kcal:.0f} | "
+                f"{protein:.0f} | {carbs:.0f} | {fat:.0f} |"
             )
-        else:
-            food_lines = ["| Food | Daily Amount |", "|------|--------------|"]
-            for food in sorted(result.foods, key=lambda f: -f.grams):
-                amount_str = f"{food.grams:.0f}g"
-                name = clean_food_name(food.description)
-                food_lines.append(f"| {name} | {amount_str} |")
 
-            # Add totals
-            total_grams = sum(f.grams for f in result.foods)
-            food_lines.append(f"| **Total** | **{total_grams:.0f}g** |")
+        # Add totals row
+        food_lines.append(
+            f"| **Total** | **{total_grams:.0f}** | **{total_kcal:.0f}** | "
+            f"**{total_protein:.0f}** | **{total_carbs:.0f}** | **{total_fat:.0f}** |"
+        )
 
         if result.total_cost:
             food_lines.append(f"\n**Daily Cost:** ${result.total_cost:.2f}")
 
         food_table = "\n".join(food_lines)
+
+        # Generate preparation notes based on detected states
+        prep_notes = []
+        if prep_states["raw"]:
+            prep_notes.append("- Foods marked (raw) should be cooked before serving")
+        if prep_states["cooked"]:
+            prep_notes.append(
+                "- Foods marked (cooked) are pre-cooked; reheat or use directly"
+            )
+        if prep_states["canned"]:
+            prep_notes.append("- Foods marked (canned) are ready to use as-is")
+        preparation_notes = "\n".join(prep_notes) if prep_notes else "None"
 
         # Format preferences
         prefs = self.preferences
@@ -284,6 +319,7 @@ class LLMPromptGenerator:
         template = Template(self.template)
         prompt = template.safe_substitute(
             FOOD_TABLE=food_table,
+            PREPARATION_NOTES=preparation_notes,
             CUISINES=cuisines,
             SKILL_LEVEL=prefs.get("skill_level", "intermediate"),
             MAX_PREP_TIME=prefs.get("max_prep_time", "30 minutes"),
