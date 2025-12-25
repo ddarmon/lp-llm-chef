@@ -25,10 +25,20 @@ class FoodQueries:
             List of matching food rows
         """
         query = """
-            SELECT fdc_id, description, data_type, food_category, is_active
-            FROM foods
-            WHERE description LIKE ? AND is_active = TRUE
-            ORDER BY description
+            SELECT
+                f.fdc_id,
+                f.description,
+                f.data_type,
+                f.food_category,
+                f.is_active,
+                p.price_per_100g,
+                GROUP_CONCAT(ft.tag, ', ') as tags
+            FROM foods f
+            LEFT JOIN prices p ON f.fdc_id = p.fdc_id
+            LEFT JOIN food_tags ft ON f.fdc_id = ft.fdc_id
+            WHERE f.description LIKE ? AND f.is_active = TRUE
+            GROUP BY f.fdc_id
+            ORDER BY f.description
             LIMIT ?
         """
         return conn.execute(query, (f"%{search_term}%", limit)).fetchall()

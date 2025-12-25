@@ -186,6 +186,12 @@ Save the profile:
 mealplan profile create cutting --from-file cutting.yaml
 ```
 
+**Interactive Wizard**: You can also create profiles interactively:
+
+``` bash
+mealplan profile wizard
+```
+
 Available nutrient names: `protein`, `carbohydrate`, `total_fat`,
 `fiber`, `sugar`, `saturated_fat`, `sodium`, `calcium`, `iron`,
 `magnesium`, `potassium`, `zinc`, `vitamin_a`, `vitamin_c`, `vitamin_d`,
@@ -206,6 +212,12 @@ mealplan tags add 12345 exclude
 
 # List foods with a tag
 mealplan tags list --tag protein
+```
+
+**Interactive Tagging**: Quickly search and tag foods by number:
+
+``` bash
+mealplan tags interactive
 ```
 
 Use `exclude_tags` and `include_tags` in profiles to filter foods.
@@ -260,7 +272,7 @@ This ensures optimization only suggests foods you actually buy and cook with.
   `mealplan init <path>`             Initialize database from USDA CSV
                                      directory
 
-  `mealplan search <query>`          Search foods by description
+  `mealplan search <query>`          Search foods (shows price/tags)
 
   `mealplan info <fdc_id>`           Show nutrients for a food
 
@@ -285,7 +297,11 @@ This ensures optimization only suggests foods you actually buy and cook with.
 
   `mealplan tags list`               List all tags or foods with tag
 
+  `mealplan tags interactive`        Interactive mode to search/tag
+
   `mealplan profile create`          Create profile from YAML
+
+  `mealplan profile wizard`          Interactive profile creator
 
   `mealplan profile list`            List saved profiles
 

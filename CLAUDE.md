@@ -56,7 +56,7 @@ Interactive scripts for new users:
 
 ``` bash
 mealplan init <usda-csv-path>      # Initialize database from USDA data
-mealplan search <query>             # Search foods by description
+mealplan search <query>             # Search foods (shows price/tags)
 mealplan info <fdc_id>              # Show food nutrients
 mealplan optimize                   # Run optimization (feasibility mode)
 mealplan optimize --minimize-cost   # Run with cost minimization
@@ -67,7 +67,9 @@ mealplan export-for-llm latest      # Generate Claude prompt from last run
 mealplan prices add <fdc_id> <price>
 mealplan tags add <fdc_id> <tag>
 mealplan tags list --tag <tag>      # List foods with a tag
+mealplan tags interactive           # Interactive mode to search and tag
 mealplan profile create <name> --from-file <yaml>
+mealplan profile wizard             # Interactive profile creation wizard
 ```
 
 ## Architecture

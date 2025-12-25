@@ -8,6 +8,7 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.prompt import Prompt
 from rich.table import Table
 
 from mealplan.config import get_settings
@@ -110,12 +111,18 @@ def search(
     table.add_column("FDC ID", style="cyan")
     table.add_column("Description")
     table.add_column("Type", style="dim")
+    table.add_column("Price/100g", style="green")
+    table.add_column("Tags", style="blue")
 
     for row in results:
+        price_str = f"${row['price_per_100g']:.2f}" if row['price_per_100g'] is not None else ""
+        tags_str = row['tags'] if row['tags'] else ""
         table.add_row(
             str(row["fdc_id"]),
             row["description"],
             row["data_type"] or "",
+            price_str,
+            tags_str,
         )
 
     console.print(table)
@@ -629,9 +636,160 @@ def tags_list(
             console.print(table)
 
 
+@tags_app.command("interactive")
+def tags_interactive(
+    tag: str = typer.Option(
+        "staple", "--tag", "-t", help="Tag to apply (default: staple)"
+    ),
+) -> None:
+    """Interactive mode to search and tag foods."""
+    tag = tag.lower()
+    console.print(f"[bold]Interactive Tagging Mode[/bold] (Tag: [cyan]{tag}[/cyan])")
+    console.print("Type a search term. Then select food numbers to toggle the tag.")
+    console.print("Type 'q' to quit.\n")
+
+    db = get_db()
+
+    while True:
+        query = Prompt.ask("\n[bold green]Search[/bold green]")
+        if query.lower() in ("q", "exit", "quit"):
+            break
+
+        if not query.strip():
+            continue
+
+        with db.get_connection() as conn:
+            results = FoodQueries.search_foods(conn, query, limit=20)
+
+        if not results:
+            console.print("[yellow]No results found[/yellow]")
+            continue
+
+        # Display results with index
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("FDC ID", style="cyan")
+        table.add_column("Description")
+        table.add_column("Current Tags")
+
+        selection_map = {}
+
+        for idx, row in enumerate(results, 1):
+            selection_map[str(idx)] = row["fdc_id"]
+
+            current_tags = row["tags"] if row["tags"] else ""
+
+            # Highlight if it already has the target tag
+            has_tag = tag in (current_tags or "").split(", ")
+
+            if has_tag:
+                style = "dim"
+                tag_display = f"[green]{current_tags}[/green]"
+            else:
+                style = None
+                tag_display = current_tags
+
+            table.add_row(
+                str(idx),
+                str(row["fdc_id"]),
+                row["description"],
+                tag_display,
+                style=style,
+            )
+
+        console.print(table)
+
+        # Selection loop
+        choice = Prompt.ask(
+            "Select # to toggle (e.g. '1 3') or Enter to search again", default=""
+        )
+        if not choice.strip():
+            continue
+
+        selections = choice.split()
+        with db.get_connection() as conn:
+            for sel in selections:
+                if sel in selection_map:
+                    fdc_id = selection_map[sel]
+                    # Check current state from DB for toggle accuracy
+                    current_tags = TagQueries.get_tags_for_food(conn, fdc_id)
+
+                    if tag in current_tags:
+                        TagQueries.remove_tag(conn, fdc_id, tag)
+                        console.print(f"  [yellow]- Removed '{tag}' from {fdc_id}[/yellow]")
+                    else:
+                        TagQueries.add_tag(conn, fdc_id, tag)
+                        console.print(f"  [green]+ Added '{tag}' to {fdc_id}[/green]")
+                else:
+                    if sel.lower() not in ("s", "q"):
+                        console.print(f"  [red]Invalid selection: {sel}[/red]")
+
+
 # ============================================================================
 # Profile Subcommands
 # ============================================================================
+
+
+@profile_app.command("wizard")
+def profile_wizard() -> None:
+    """Interactive wizard to create a constraint profile."""
+    console.print("[bold]Profile Creation Wizard[/bold]")
+    console.print(
+        "Answer a few questions to generate a personalized constraint profile.\n"
+    )
+
+    name = Prompt.ask("Profile Name (e.g., 'summer_cut')")
+    description = Prompt.ask("Description", default="Custom profile")
+
+    console.print("\n[bold]Calorie Targets[/bold]")
+    cal_min = int(Prompt.ask("Minimum Calories", default="2000"))
+    cal_max = int(Prompt.ask("Maximum Calories", default=str(cal_min + 200)))
+
+    console.print("\n[bold]Nutrient Targets[/bold]")
+    prot_min = int(Prompt.ask("Minimum Protein (g)", default="150"))
+    fiber_min = int(Prompt.ask("Minimum Fiber (g)", default="30"))
+    sodium_max = int(Prompt.ask("Maximum Sodium (mg)", default="2300"))
+
+    use_staples = typer.confirm("Restrict to 'staple' tagged foods only?", default=True)
+
+    # Build constraint dictionary
+    constraints = {
+        "calories": {"min": cal_min, "max": cal_max},
+        "nutrients": {
+            "protein": {"min": prot_min},
+            "fiber": {"min": fiber_min},
+            "sodium": {"max": sodium_max},
+        },
+        "exclude_tags": ["exclude", "junk_food"],
+        "options": {
+            "max_grams_per_food": 500,
+            "lambda_deviation": 0.001,
+        },
+    }
+
+    if use_staples:
+        constraints["include_tags"] = ["staple"]
+
+    # Serialize
+    constraints_json = json.dumps(constraints)
+
+    db = get_db()
+    with db.get_connection() as conn:
+        existing = ProfileQueries.get_profile_by_name(conn, name)
+        if existing:
+            if not typer.confirm(f"Profile '{name}' exists. Overwrite?"):
+                raise typer.Abort()
+            ProfileQueries.update_profile(conn, name, constraints_json, description)
+            console.print(f"[green]Updated profile '{name}'[/green]")
+        else:
+            ProfileQueries.create_profile(conn, name, constraints_json, description)
+            console.print(f"[green]Created profile '{name}'[/green]")
+
+    # Show result
+    console.print("\n[dim]Profile Preview:[/dim]")
+    import yaml
+
+    console.print(yaml.dump(constraints, default_flow_style=False))
 
 
 @profile_app.command("create")
