@@ -1,0 +1,36 @@
+# Practical Cutting Profile
+# High-protein weight loss with realistic food choices
+#
+# Key insight: Use include_tags to limit to foods you've tagged as "staple"
+# This way you only get foods you actually buy and cook with.
+
+name: practical_cutting
+description: "1600-1800 cal, 150g protein, limited to staple foods"
+
+calories:
+  min: 1600
+  max: 1800
+
+nutrients:
+  protein:
+    min: 150
+  fiber:
+    min: 25
+  sodium:
+    max: 2300
+  saturated_fat:
+    max: 15
+
+# IMPORTANT: Only use foods you've tagged as "staple"
+include_tags:
+  - staple
+
+# Foods to exclude even from staples
+exclude_tags:
+  - exclude
+  - junk_food
+
+options:
+  max_grams_per_food: 400
+  use_quadratic_penalty: true
+  lambda_deviation: 0.001

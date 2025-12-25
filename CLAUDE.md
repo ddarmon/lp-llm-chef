@@ -40,6 +40,18 @@ ruff check src/
 mypy src/mealplan/
 ```
 
+## Quick Start Scripts
+
+Interactive scripts for new users:
+
+``` bash
+# Full interactive setup (diet type, style, goals, auto-tag staples)
+./scripts/setup-meal-plan.sh
+
+# Tag staple foods interactively with bulk category support
+./scripts/tag-staple-foods.sh
+```
+
 ## CLI Usage
 
 ``` bash
@@ -50,9 +62,11 @@ mealplan optimize                   # Run optimization (feasibility mode)
 mealplan optimize --minimize-cost   # Run with cost minimization
 mealplan optimize --max-foods 500   # Increase food pool (default 300)
 mealplan optimize --profile <name>  # Use a constraint profile
+mealplan optimize --file <yaml>     # Use YAML file directly
 mealplan export-for-llm latest      # Generate Claude prompt from last run
 mealplan prices add <fdc_id> <price>
 mealplan tags add <fdc_id> <tag>
+mealplan tags list --tag <tag>      # List foods with a tag
 mealplan profile create <name> --from-file <yaml>
 ```
 
@@ -110,7 +124,12 @@ nutrients:
     min: 150
   sodium:
     max: 2300
+# Use include_tags to limit to foods you've tagged as "staple"
+# This prevents baby food, exotic meats, etc. from appearing
+include_tags:
+  - staple
 exclude_tags:
+  - exclude
   - junk_food
 options:
   mode: feasibility       # or "minimize_cost"
@@ -118,6 +137,12 @@ options:
   max_grams_per_food: 500
   lambda_deviation: 0.001
 ```
+
+Example profiles in `examples/constraints/`:
+- `cutting.yaml` - Weight loss (1600-1800 cal, 150g protein)
+- `bulking.yaml` - Muscle gain (2800-3200 cal, 180g protein)
+- `maintenance.yaml` - Balanced (2200-2400 cal, micronutrient focus)
+- `slowcarb_pescatarian.yaml` - Tim Ferriss style + fish only
 
 ## Key Design Decisions
 

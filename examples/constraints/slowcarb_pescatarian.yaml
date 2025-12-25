@@ -1,0 +1,30 @@
+# Slow-Carb Pescatarian Profile
+# Tim Ferriss style: no white carbs, legumes as primary carb, high protein
+# Pescatarian: fish/seafood + eggs, no meat
+
+name: slowcarb_pescatarian
+description: "Slow-carb pescatarian diet - high protein, legume-based carbs"
+
+calories:
+  min: 1800
+  max: 2000
+
+nutrients:
+  protein:
+    min: 180
+  fiber:
+    min: 30
+  sodium:
+    max: 2500
+
+# Only use foods tagged as staple (our curated slow-carb pescatarian list)
+include_tags:
+  - staple
+
+exclude_tags:
+  - exclude
+
+options:
+  max_grams_per_food: 400
+  use_quadratic_penalty: true
+  lambda_deviation: 0.001

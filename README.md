@@ -41,14 +41,34 @@ pip install -e ".[dev]"
 
 ## Quick Start
 
-### 1. Download USDA Data
+### Option A: Interactive Setup (Recommended)
+
+Run the interactive setup script that guides you through everything:
+
+``` bash
+./scripts/setup-meal-plan.sh
+```
+
+This will:
+1. Install the CLI if needed
+2. Help you download and load USDA data
+3. Ask about your diet type (omnivore, pescatarian, vegetarian, vegan)
+4. Ask about your diet style (standard, slow-carb, low-carb, high-protein, Mediterranean)
+5. Set your calorie and protein targets
+6. Auto-tag recommended staple foods for your diet
+7. Run your first optimization
+8. Export a prompt for Claude to generate recipes
+
+### Option B: Manual Setup
+
+#### 1. Download USDA Data
 
 Download the FoodData Central CSV files from
 https://fdc.nal.usda.gov/download-datasets.html
 
 Get the "Full Download of All Data Types" in CSV format and extract it.
 
-### 2. Initialize the Database
+#### 2. Initialize the Database
 
 ``` bash
 mealplan init ~/Downloads/FoodData_Central_csv_2024-04-18/
@@ -57,7 +77,7 @@ mealplan init ~/Downloads/FoodData_Central_csv_2024-04-18/
 This loads \~10,000 foods from Foundation Foods and SR Legacy datasets
 into a local SQLite database at `~/.mealplan/mealplan.db`.
 
-### 3. Run Optimization
+#### 3. Run Optimization
 
 ``` bash
 # Default: feasibility mode (finds diverse, nutritionally complete foods)
@@ -174,6 +194,48 @@ mealplan tags list --tag protein
 
 Use `exclude_tags` and `include_tags` in profiles to filter foods.
 
+## Staple Foods Workflow (Recommended)
+
+By default, the optimizer considers all ~10,000 foods in the USDA database,
+which can produce impractical suggestions (baby food, exotic meats, etc.).
+
+**Solution**: Tag foods you actually buy as "staple", then use `include_tags`
+in your profile to only optimize across those foods.
+
+### Interactive Tagging
+
+``` bash
+./scripts/tag-staple-foods.sh
+```
+
+This provides an interactive shell with bulk category commands:
+
+```
+> c fish           # Show common fish options
+> c fish tag       # Tag ALL fish as staples
+> c legumes tag    # Tag all beans, lentils, chickpeas
+> c veggies tag    # Tag common vegetables
+> s salmon         # Search for a specific food
+> t 175167         # Tag a specific FDC ID
+> l                # List current staples
+```
+
+Available categories: `fish`, `seafood`, `meat`, `legumes`, `veggies`,
+`greens`, `carbs`, `fruits`, `fats`, `dairy`, `eggs`
+
+### Using Staples in Profiles
+
+``` yaml
+# Only use foods tagged as "staple"
+include_tags:
+  - staple
+
+exclude_tags:
+  - exclude
+```
+
+This ensures optimization only suggests foods you actually buy and cook with.
+
 ## Commands Reference
 
   ----------------------------------------------------------------------------
@@ -214,25 +276,41 @@ Use `exclude_tags` and `include_tags` in profiles to filter foods.
   `mealplan profile show`            Show profile details
   ----------------------------------------------------------------------------
 
+## Example Profiles
+
+Example constraint profiles are provided in `examples/constraints/`:
+
+| Profile | Description |
+|---------|-------------|
+| `cutting.yaml` | Weight loss: 1600-1800 cal, 150g protein |
+| `bulking.yaml` | Muscle gain: 2800-3200 cal, 180g protein |
+| `maintenance.yaml` | Balanced: 2200-2400 cal, micronutrient focus |
+| `slowcarb_pescatarian.yaml` | Tim Ferriss style slow-carb + fish only |
+| `staples_only.yaml` | Template using only tagged staple foods |
+
+Use directly with `--file`:
+
+``` bash
+mealplan optimize --file examples/constraints/cutting.yaml
+```
+
 ## Example Workflow
 
 ``` bash
-# 1. Set up (one time)
+# 1. Set up with interactive script (recommended)
+./scripts/setup-meal-plan.sh
+
+# OR manual setup:
+
+# 1. Initialize database (one time)
 mealplan init ~/Downloads/FoodData_Central_csv/
 
-# 2. Add prices for ~20-50 foods you commonly eat
-mealplan search "eggs"
-mealplan prices add 173424 0.40 --source costco --notes "large eggs"
-mealplan search "salmon"
-mealplan prices add 175167 1.20 --source costco
-# ... repeat for your staple foods
+# 2. Tag your staple foods
+./scripts/tag-staple-foods.sh
+# Use: c veggies tag, c fish tag, c legumes tag, etc.
 
-# 3. Tag foods (optional)
-mealplan tags add 173424 breakfast
-mealplan tags add 175167 dinner
-
-# 4. Create a constraint profile
-cat > cutting.yaml << 'EOF'
+# 3. Create a constraint profile with include_tags
+cat > my_diet.yaml << 'EOF'
 calories:
   min: 1700
   max: 1900
@@ -241,13 +319,16 @@ nutrients:
     min: 140
   fiber:
     min: 25
+include_tags:
+  - staple
+exclude_tags:
+  - exclude
 EOF
-mealplan profile create cutting --from-file cutting.yaml
 
-# 5. Run optimization
-mealplan optimize --profile cutting
+# 4. Run optimization
+mealplan optimize --file my_diet.yaml
 
-# 6. Get recipes from Claude
+# 5. Get recipes from Claude
 mealplan export-for-llm latest --days 7 --output ~/Desktop/meal_plan.md
 # Open meal_plan.md and paste into Claude
 ```
@@ -288,7 +369,22 @@ Settings are stored in `~/.mealplan/`:
     ├── mealplan.db          # SQLite database
     ├── preferences.yaml     # LLM prompt preferences
     ├── llm_prompt_template.md  # Custom prompt template
-    └── constraints/         # Your constraint profiles
+    └── profiles/            # Your constraint profiles
+
+Helper scripts in `scripts/`:
+
+    scripts/
+    ├── setup-meal-plan.sh    # Interactive first-time setup
+    └── tag-staple-foods.sh   # Bulk tag staple foods by category
+
+Example profiles in `examples/constraints/`:
+
+    examples/constraints/
+    ├── cutting.yaml              # Weight loss
+    ├── bulking.yaml              # Muscle gain
+    ├── maintenance.yaml          # Balanced
+    ├── slowcarb_pescatarian.yaml # Slow-carb + fish
+    └── staples_only.yaml         # Template with include_tags
 
 ## Development
 

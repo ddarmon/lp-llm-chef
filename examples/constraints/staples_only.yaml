@@ -1,0 +1,29 @@
+# Staples-Only Cutting Profile
+# Uses only foods you've tagged as "staple"
+
+name: staples_cutting
+description: "1800-2000 cal cut using only your staple foods"
+
+calories:
+  min: 1800
+  max: 2000
+
+nutrients:
+  protein:
+    min: 180
+  fiber:
+    min: 25
+  sodium:
+    max: 2300
+
+# KEY: Only use foods with the "staple" tag
+include_tags:
+  - staple
+
+exclude_tags:
+  - exclude
+
+options:
+  max_grams_per_food: 500
+  use_quadratic_penalty: true
+  lambda_deviation: 0.001
