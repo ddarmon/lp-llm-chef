@@ -268,16 +268,9 @@ class KKTFormatter:
             f"[bold]3. Complementary Slackness:[/bold] {status_str(kkt.complementary_slackness_satisfied)}",
             "   (λᵢ · gᵢ(x*) = 0 for all constraints)",
             "",
-            f"[bold]4. Stationarity:[/bold] RMS(∇L) = {kkt.stationarity_residual:.2e}",
-            "   (∇f(x*) + Σ λᵢ∇gᵢ(x*) = 0 for interior variables)",
+            f"[bold]4. Stationarity:[/bold] ||∇L|| = {kkt.stationarity_residual:.2e}",
+            "   (∇f(x*) + G'z + z_box = 0, full KKT stationarity)",
         ]
-
-        # Add note about bound multipliers
-        if kkt.solver_type in ("qp_feasibility", "qp_slsqp") and kkt.binding_food_bounds:
-            status_lines.extend([
-                "",
-                "[dim]Note: Bound multipliers (foods at limits) not included in stationarity.[/dim]",
-            ])
 
         self.console.print(Panel("\n".join(status_lines), title="KKT Optimality Conditions"))
 

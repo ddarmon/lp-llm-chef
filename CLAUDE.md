@@ -89,8 +89,9 @@ mealplan profile wizard             # Interactive profile creation wizard
 
 ### Key Modules
 
--   **`optimizer/solver.py`**: Core LP (`linprog` with HiGHS) and QP
-    (`minimize` with SLSQP) solvers. Dispatches based on `request.mode`:
+-   **`optimizer/solver.py`**: Core LP (`scipy.linprog` with HiGHS) and QP
+    (`qpsolvers` with Clarabel interior-point) solvers. Dispatches based
+    on `request.mode`:
     -   `feasibility`: QP with `λ_cost=0`, only minimizes deviation
     -   `minimize_cost`: QP with `λ_cost>0` or pure LP
 
@@ -159,14 +160,14 @@ Example profiles in `examples/constraints/`:
 
 -   **Raw sqlite3 over SQLAlchemy**: Simpler, fewer dependencies, direct
     SQL control
--   **scipy.optimize over cvxpy**: Fewer dependencies; `linprog` with
-    HiGHS for LP, `minimize` with SLSQP for QP. Requires scipy 1.16+
-    for native Lagrange multiplier support in SLSQP.
+-   **qpsolvers with Clarabel for QP**: True interior-point solver provides
+    high-precision solutions (~1e-11 stationarity) and full dual multipliers
+    including bound constraints. `scipy.linprog` with HiGHS for LP.
 -   **All values per 100g**: Matches USDA data format; divide by 100
     when building per-gram matrices
 -   **`from __future__ import annotations`**: Required in all files for
     forward reference compatibility
 -   **KKT analysis**: The `--verbose` flag displays Karush-Kuhn-Tucker
     optimality conditions (primal/dual feasibility, complementary
-    slackness, stationarity) with Lagrange multipliers for binding
-    constraints
+    slackness, stationarity) with full Lagrange multipliers for all
+    binding constraints including variable bounds
