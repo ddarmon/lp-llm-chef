@@ -6,10 +6,17 @@ with code in this repository.
 ## Project Overview
 
 `lp-llm-chef` is a personal meal planning optimization system that uses
-linear/quadratic programming (LP/QP) to find minimum-cost food
-combinations satisfying nutritional constraints. It uses USDA FoodData
-Central as its nutrition database and can generate prompts for Claude to
-create recipes.
+quadratic programming (QP) to find diverse food combinations satisfying
+nutritional constraints. It uses USDA FoodData Central as its nutrition
+database and can generate prompts for Claude to create recipes.
+
+### Optimization Modes
+
+-   **Feasibility mode** (default): Minimizes `||x - x̄||²` (deviation
+    from typical 100g portions). Produces diverse, recipe-friendly food
+    lists. No prices required.
+-   **Cost minimization mode** (`--minimize-cost`): Minimizes
+    `λ₁·cost + λ₂·||x - x̄||²`. Requires foods to have prices set.
 
 ## Development Commands
 
@@ -39,7 +46,10 @@ mypy src/mealplan/
 mealplan init <usda-csv-path>      # Initialize database from USDA data
 mealplan search <query>             # Search foods by description
 mealplan info <fdc_id>              # Show food nutrients
-mealplan optimize --profile <name>  # Run optimization
+mealplan optimize                   # Run optimization (feasibility mode)
+mealplan optimize --minimize-cost   # Run with cost minimization
+mealplan optimize --max-foods 500   # Increase food pool (default 300)
+mealplan optimize --profile <name>  # Use a constraint profile
 mealplan export-for-llm latest      # Generate Claude prompt from last run
 mealplan prices add <fdc_id> <price>
 mealplan tags add <fdc_id> <tag>
@@ -63,13 +73,15 @@ mealplan profile create <name> --from-file <yaml>
 ### Key Modules
 
 -   **`optimizer/solver.py`**: Core LP (`linprog` with HiGHS) and QP
-    (`minimize` with SLSQP) solvers. The QP solver adds a palatability
-    penalty: `λ₁·cost + λ₂·||x - x̄||²` to encourage diverse solutions.
+    (`minimize` with SLSQP) solvers. Dispatches based on `request.mode`:
+    -   `feasibility`: QP with `λ_cost=0`, only minimizes deviation
+    -   `minimize_cost`: QP with `λ_cost>0` or pure LP
 
 -   **`optimizer/constraints.py`**: `ConstraintBuilder` queries the
-    database for eligible foods (those with prices, passing tag
-    filters), builds the nutrient matrix (nutrients per gram), and
-    converts nutrient constraints to numpy arrays.
+    database for eligible foods, builds the nutrient matrix (nutrients
+    per gram), and converts nutrient constraints to numpy arrays.
+    In feasibility mode, all active foods are eligible; in cost mode,
+    only foods with prices. Randomly samples to `max_foods` if exceeded.
 
 -   **`db/queries.py`**: Query classes (`FoodQueries`, `PriceQueries`,
     `TagQueries`, `ProfileQueries`, `OptimizationRunQueries`)
@@ -99,10 +111,12 @@ nutrients:
   sodium:
     max: 2300
 exclude_tags:
-
   - junk_food
 options:
-  use_quadratic_penalty: true
+  mode: feasibility       # or "minimize_cost"
+  max_foods: 300          # randomly sample if more eligible
+  max_grams_per_food: 500
+  lambda_deviation: 0.001
 ```
 
 ## Key Design Decisions

@@ -1,7 +1,7 @@
 # lp-llm-chef
 
-A personal meal planning system that uses linear programming to find the
-minimum-cost combination of foods that satisfies your nutritional
+A personal meal planning system that uses linear/quadratic programming
+to find diverse combinations of foods that satisfy your nutritional
 constraints. Optionally integrates with Claude to generate recipes from
 the optimized food list.
 
@@ -9,8 +9,11 @@ the optimized food list.
 
 -   **Nutritional optimization**: Specify calorie targets, macro/micro
     nutrient minimums and maximums
--   **Cost minimization**: Finds the cheapest diet that meets all your
-    constraints
+-   **Two optimization modes**:
+    -   **Feasibility mode** (default): Finds diverse, nutritionally
+        complete food combinations without considering cost
+    -   **Cost minimization mode**: Finds the cheapest diet that meets
+        all constraints
 -   **USDA nutrition data**: Uses the comprehensive FoodData Central
     database (\~10,000 foods)
 -   **Constraint profiles**: Save and reuse different dietary goals
@@ -54,10 +57,27 @@ mealplan init ~/Downloads/FoodData_Central_csv_2024-04-18/
 This loads \~10,000 foods from Foundation Foods and SR Legacy datasets
 into a local SQLite database at `~/.mealplan/mealplan.db`.
 
-### 3. Add Prices for Foods You Eat
+### 3. Run Optimization
 
-The optimizer needs prices to minimize cost. Add them for foods you
-actually eat:
+``` bash
+# Default: feasibility mode (finds diverse, nutritionally complete foods)
+mealplan optimize
+
+# With a constraint profile
+mealplan optimize --profile cutting
+
+# Limit number of foods considered (default 300, for speed)
+mealplan optimize --max-foods 500
+
+# Output as JSON or Markdown
+mealplan optimize --output json
+mealplan optimize --output markdown
+```
+
+### 4. Add Prices (Optional, for Cost Minimization)
+
+Prices are only needed if you want to minimize cost. In the default
+feasibility mode, all foods in the database are eligible.
 
 ``` bash
 # Search for a food
@@ -69,6 +89,9 @@ mealplan prices add 171077 0.80 --source costco
 
 # Or import from CSV
 mealplan prices import my_prices.csv
+
+# Run with cost minimization
+mealplan optimize --minimize-cost
 ```
 
 Price CSV format:
@@ -77,20 +100,6 @@ Price CSV format:
 fdc_id,price_per_100g,price_source,notes
 171077,0.80,costco,chicken breast bulk
 170148,0.15,costco,brown rice
-```
-
-### 4. Run Optimization
-
-``` bash
-# With default constraints (2000 cal, basic macros)
-mealplan optimize
-
-# With a constraint profile
-mealplan optimize --profile cutting
-
-# Output as JSON or Markdown
-mealplan optimize --output json
-mealplan optimize --output markdown
 ```
 
 ### 5. Generate Recipes with Claude
@@ -126,13 +135,13 @@ nutrients:
     max: 15
 
 exclude_tags:
-
   - junk_food
   - high_sugar
 
 options:
   max_grams_per_food: 400
-  use_quadratic_penalty: true  # encourages variety
+  max_foods: 300            # limit foods for performance
+  mode: feasibility         # or "minimize_cost"
 ```
 
 Save the profile:
@@ -245,9 +254,7 @@ mealplan export-for-llm latest --days 7 --output ~/Desktop/meal_plan.md
 
 ## How It Works
 
-The optimizer solves a linear program:
-
-**Minimize**: Total daily cost = Σ (price per gram × grams of food)
+The optimizer uses quadratic programming with constraints:
 
 **Subject to**:
 
@@ -256,9 +263,21 @@ The optimizer solves a linear program:
 -   Nutrient maximums: sodium ≤ 2300mg, etc.
 -   Per-food limits: 0 ≤ each food ≤ 500g (configurable)
 
-With `use_quadratic_penalty: true`, a small penalty for deviating from
-"typical" portions is added, which encourages variety instead of extreme
-solutions (e.g., eating 2kg of one cheap food).
+### Feasibility Mode (default)
+
+**Minimize**: Deviation from typical portions = Σ (grams - 100)²
+
+This finds diverse food combinations by penalizing extreme quantities.
+Foods naturally cluster around 100g portions, producing recipe-friendly
+results. No prices required.
+
+### Cost Minimization Mode (`--minimize-cost`)
+
+**Minimize**: λ₁·cost + λ₂·deviation
+
+Finds the cheapest diet meeting constraints, with a small diversity
+penalty to avoid extreme solutions (e.g., eating 2kg of one cheap food).
+Requires prices to be set for foods.
 
 ## Configuration
 

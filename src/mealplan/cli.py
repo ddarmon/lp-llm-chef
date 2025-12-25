@@ -183,6 +183,12 @@ def optimize(
         "table", "--output", "-o", help="Output format: table, json, markdown"
     ),
     save: bool = typer.Option(True, "--save/--no-save", help="Save run to history"),
+    minimize_cost: bool = typer.Option(
+        False, "--minimize-cost", help="Minimize cost instead of finding diverse feasible solution"
+    ),
+    max_foods: int = typer.Option(
+        300, "--max-foods", help="Maximum foods to consider (randomly sampled if exceeded)"
+    ),
 ) -> None:
     """Run meal plan optimization."""
     from mealplan.export.formatters import format_result
@@ -224,10 +230,31 @@ def optimize(
         console.print("[yellow]Using default constraints[/yellow]")
 
     request.planning_days = days
+    request.max_foods = max_foods
 
-    # Run optimization
-    with console.status("[bold green]Optimizing..."):
-        with db.get_connection() as conn:
+    # Override mode if --minimize-cost flag is set
+    if minimize_cost:
+        request.mode = "minimize_cost"
+
+    # Run optimization with verbose output
+    with db.get_connection() as conn:
+        # Build constraints first to get food count info
+        from mealplan.optimizer.constraints import ConstraintBuilder
+
+        builder = ConstraintBuilder(conn, request)
+        constraint_data = builder.build()
+
+        total_foods = constraint_data["total_eligible_foods"]
+        used_foods = len(constraint_data["food_ids"])
+
+        if constraint_data["was_sampled"]:
+            console.print(
+                f"[dim]Found {total_foods} eligible foods, randomly sampled {used_foods}[/dim]"
+            )
+        else:
+            console.print(f"[dim]Found {used_foods} eligible foods[/dim]")
+
+        with console.status("[bold green]Optimizing..."):
             result = solve_diet_problem(request, conn)
 
     # Save to history if requested

@@ -47,6 +47,7 @@ class FoodConstraint:
 class OptimizationRequest:
     """Input specification for the optimizer."""
 
+    mode: str = "feasibility"  # "feasibility" | "minimize_cost"
     objective: ObjectiveType = ObjectiveType.MINIMIZE_COST
     calorie_range: tuple[float, float] = (1800, 2200)
     nutrient_constraints: list[NutrientConstraint] = field(default_factory=list)
@@ -54,6 +55,7 @@ class OptimizationRequest:
     exclude_tags: list[str] = field(default_factory=list)
     include_tags: list[str] = field(default_factory=list)
     max_grams_per_food: float = 500.0
+    max_foods: int = 300  # Max foods to consider (randomly sampled if exceeded)
     planning_days: int = 1
     use_quadratic_penalty: bool = True
     lambda_cost: float = 1.0

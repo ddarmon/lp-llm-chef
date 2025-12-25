@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
@@ -31,6 +32,8 @@ class ConstraintBuilder:
         self.request = request
         self._food_ids: list[int] = []
         self._nutrient_ids: list[int] = []
+        self._total_eligible_foods: int = 0  # Before sampling
+        self._was_sampled: bool = False
 
     def build(self) -> dict[str, Any]:
         """Build all matrices and vectors needed for optimization.
@@ -58,17 +61,28 @@ class ConstraintBuilder:
             "nutrient_maxs": self._build_nutrient_max_vector(),
             "food_bounds": self._build_food_bounds(),
             "nutrient_ids": self._nutrient_ids,
+            # Metadata for reporting
+            "total_eligible_foods": self._total_eligible_foods,
+            "was_sampled": self._was_sampled,
         }
 
     def _load_eligible_foods(self) -> None:
-        """Load food IDs that pass tag filters and have prices."""
-        # Build query for foods with prices
-        query = """
-            SELECT DISTINCT f.fdc_id
-            FROM foods f
-            INNER JOIN prices p ON f.fdc_id = p.fdc_id
-            WHERE f.is_active = TRUE
-        """
+        """Load food IDs that pass tag filters (and have prices if not in feasibility mode)."""
+        # In feasibility mode, we don't need prices
+        # In cost minimization mode, we require prices
+        if self.request.mode == "feasibility":
+            query = """
+                SELECT DISTINCT f.fdc_id
+                FROM foods f
+                WHERE f.is_active = TRUE
+            """
+        else:
+            query = """
+                SELECT DISTINCT f.fdc_id
+                FROM foods f
+                INNER JOIN prices p ON f.fdc_id = p.fdc_id
+                WHERE f.is_active = TRUE
+            """
         params: list[Any] = []
 
         # Apply exclude_tags filter
@@ -102,6 +116,14 @@ class ConstraintBuilder:
             or (fc.max_grams is None and fc.min_grams is None)
         }
         self._food_ids = [fid for fid in self._food_ids if fid not in excluded]
+
+        # Track total before sampling
+        self._total_eligible_foods = len(self._food_ids)
+
+        # Sample if over the limit
+        if len(self._food_ids) > self.request.max_foods:
+            self._was_sampled = True
+            self._food_ids = random.sample(self._food_ids, self.request.max_foods)
 
     def _load_required_nutrients(self) -> None:
         """Determine which nutrients we need to track."""
@@ -327,5 +349,9 @@ def load_profile_from_yaml(yaml_path: Path) -> OptimizationRequest:
         request.lambda_cost = float(options["lambda_cost"])
     if "lambda_deviation" in options:
         request.lambda_deviation = float(options["lambda_deviation"])
+    if "mode" in options:
+        request.mode = str(options["mode"])
+    if "max_foods" in options:
+        request.max_foods = int(options["max_foods"])
 
     return request

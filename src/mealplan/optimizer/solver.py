@@ -217,12 +217,25 @@ def solve_diet_problem(
         conn, constraint_data["nutrient_ids"]
     )
 
-    # Choose solver based on request
-    if request.use_quadratic_penalty:
-        # Build typical consumption vector (default 100g per food)
-        n_foods = len(constraint_data["food_ids"])
-        typical = np.full(n_foods, 100.0)
+    # Choose solver based on request mode
+    n_foods = len(constraint_data["food_ids"])
+    typical = np.full(n_foods, 100.0)
 
+    if request.mode == "feasibility":
+        # Feasibility mode: QP with λ_cost=0, just minimize deviation from typical
+        result = solve_qp(
+            costs=constraint_data["costs"],
+            nutrient_matrix=constraint_data["nutrient_matrix"],
+            nutrient_mins=constraint_data["nutrient_mins"],
+            nutrient_maxs=constraint_data["nutrient_maxs"],
+            food_bounds=constraint_data["food_bounds"],
+            typical_consumption=typical,
+            lambda_cost=0.0,
+            lambda_deviation=request.lambda_deviation,
+        )
+        solver_type = "qp_feasibility"
+    elif request.use_quadratic_penalty:
+        # Cost minimization with diversity penalty
         result = solve_qp(
             costs=constraint_data["costs"],
             nutrient_matrix=constraint_data["nutrient_matrix"],
@@ -233,7 +246,9 @@ def solve_diet_problem(
             lambda_cost=request.lambda_cost,
             lambda_deviation=request.lambda_deviation,
         )
+        solver_type = "qp_slsqp"
     else:
+        # Pure LP cost minimization
         result = solve_lp(
             costs=constraint_data["costs"],
             nutrient_matrix=constraint_data["nutrient_matrix"],
@@ -241,6 +256,7 @@ def solve_diet_problem(
             nutrient_maxs=constraint_data["nutrient_maxs"],
             food_bounds=constraint_data["food_bounds"],
         )
+        solver_type = "lp_highs"
 
     # Handle failed optimization
     if not result["success"]:
@@ -323,6 +339,6 @@ def solve_diet_problem(
         solver_info={
             "iterations": result["iterations"],
             "elapsed_seconds": result["elapsed_seconds"],
-            "solver": "qp_slsqp" if request.use_quadratic_penalty else "lp_highs",
+            "solver": solver_type,
         },
     )
