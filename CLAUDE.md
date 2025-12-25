@@ -104,6 +104,14 @@ mealplan profile create <name> --from-file <yaml>
 -   **`data/nutrient_ids.py`**: Maps friendly names ("protein",
     "vitamin_d") to USDA nutrient IDs (1003, 1114).
 
+-   **`export/llm_prompt.py`**: `LLMPromptGenerator` creates Claude-ready
+    prompts with:
+    -   Enhanced food names with prep state: `Salmon (raw)`, `Lentils (cooked)`
+    -   Full macro columns: Amount, Kcal, Protein, Carbs, Fat
+    -   Auto-generated preparation notes based on detected states
+    -   `clean_food_name()` simplifies USDA names for CLI display
+    -   `clean_food_name_with_context()` preserves prep state for LLM prompts
+
 ### Database Schema
 
 8 tables in SQLite: `foods`, `nutrients`, `food_nutrients`, `prices`,

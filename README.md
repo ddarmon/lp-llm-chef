@@ -126,10 +126,26 @@ fdc_id,price_per_100g,price_source,notes
 
 ``` bash
 # Export the last optimization as an LLM prompt
-mealplan export-for-llm latest --output meal_request.md
+mealplan export-for-llm latest --days 7 --output meal_request.md
 
 # Then paste the contents into Claude to get recipes
 ```
+
+The exported prompt includes:
+- **Food names with preparation context**: `Salmon (raw)`, `Black beans (cooked)`, `Sardines (canned)`
+- **Full macros per food**: Amount, Kcal, Protein, Carbs, Fat
+- **Preparation notes**: Guidance on cooking raw items, using canned/cooked items
+
+Example output:
+```
+| Food | Amount (g) | Kcal | Protein (g) | Carbs (g) | Fat (g) |
+|------|------------|------|-------------|-----------|---------|
+| Salmon (raw) | 75 | 156 | 15 | 0 | 10 |
+| Black beans (cooked) | 85 | 111 | 7 | 21 | 0 |
+| Eggs (raw) | 80 | 114 | 10 | 1 | 8 |
+```
+
+This gives Claude complete nutritional context to generate accurate recipes.
 
 ## Constraint Profiles
 
