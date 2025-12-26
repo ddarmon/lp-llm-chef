@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
@@ -31,10 +33,28 @@ console = Console()
 prices_app = typer.Typer(help="Manage food prices")
 tags_app = typer.Typer(help="Manage food tags")
 profile_app = typer.Typer(help="Manage constraint profiles")
+schema_app = typer.Typer(help="Export schemas for LLM agents")
+explore_app = typer.Typer(help="Explore foods and run what-if analysis")
 
 app.add_typer(prices_app, name="prices")
 app.add_typer(tags_app, name="tags")
 app.add_typer(profile_app, name="profile")
+app.add_typer(schema_app, name="schema")
+app.add_typer(explore_app, name="explore")
+
+
+# ============================================================================
+# Helper for JSON output
+# ============================================================================
+
+
+def output_json(response: dict, file=None) -> None:
+    """Output JSON response to stdout or file."""
+    json_str = json.dumps(response, indent=2)
+    if file:
+        file.write(json_str)
+    else:
+        print(json_str)
 
 
 # ============================================================================
@@ -50,6 +70,9 @@ def init(
     db_path: Optional[Path] = typer.Option(
         None, "--db", help="Custom database path"
     ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output as JSON"
+    ),
 ) -> None:
     """Initialize database from USDA data."""
     from mealplan.data.usda_loader import USDALoader
@@ -61,47 +84,90 @@ def init(
     else:
         db = get_db()
 
-    console.print(f"Initializing database at: {db.db_path}")
+    if not json_output:
+        console.print(f"Initializing database at: {db.db_path}")
 
     # Create schema
     db.initialize_schema()
-    console.print("[green]Schema created[/green]")
+    if not json_output:
+        console.print("[green]Schema created[/green]")
 
     # Load USDA data
     settings = get_settings()
     data_types = settings.usda.data_types
 
-    console.print(f"Loading USDA data from: {usda_path}")
-    console.print(f"Data types: {', '.join(data_types)}")
+    if not json_output:
+        console.print(f"Loading USDA data from: {usda_path}")
+        console.print(f"Data types: {', '.join(data_types)}")
 
-    with console.status("[bold green]Loading data...") as status:
+    if json_output:
         with db.get_connection() as conn:
             loader = USDALoader(usda_path, conn)
+            counts = loader.load_all(data_types)
+        output_json({
+            "success": True,
+            "command": "init",
+            "data": {
+                "db_path": str(db.db_path),
+                "foods_loaded": counts["foods"],
+                "nutrients_loaded": counts["nutrients"],
+                "food_nutrients_loaded": counts["food_nutrients"],
+                "servings_loaded": counts.get("servings", 0),
+            },
+            "human_summary": f"Loaded {counts['foods']} foods with {counts['food_nutrients']} nutrient records",
+        })
+    else:
+        with console.status("[bold green]Loading data...") as status:
+            with db.get_connection() as conn:
+                loader = USDALoader(usda_path, conn)
 
-            def progress(msg: str) -> None:
-                status.update(f"[bold green]{msg}")
-                console.print(f"  {msg}")
+                def progress(msg: str) -> None:
+                    status.update(f"[bold green]{msg}")
+                    console.print(f"  {msg}")
 
-            counts = loader.load_all(data_types, progress)
+                counts = loader.load_all(data_types, progress)
 
-    console.print()
-    console.print("[bold green]Database initialized successfully![/bold green]")
-    console.print(f"  Foods loaded: {counts['foods']}")
-    console.print(f"  Nutrients loaded: {counts['nutrients']}")
-    console.print(f"  Food-nutrient records: {counts['food_nutrients']}")
-    if counts.get("servings"):
-        console.print(f"  Serving sizes: {counts['servings']}")
+        console.print()
+        console.print("[bold green]Database initialized successfully![/bold green]")
+        console.print(f"  Foods loaded: {counts['foods']}")
+        console.print(f"  Nutrients loaded: {counts['nutrients']}")
+        console.print(f"  Food-nutrient records: {counts['food_nutrients']}")
+        if counts.get("servings"):
+            console.print(f"  Serving sizes: {counts['servings']}")
 
 
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search term for food descriptions"),
     limit: int = typer.Option(20, "--limit", "-n", help="Maximum results"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Search for foods by description."""
     db = get_db()
     with db.get_connection() as conn:
         results = FoodQueries.search_foods(conn, query, limit)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "search",
+            "data": {
+                "query": query,
+                "results": [
+                    {
+                        "fdc_id": row["fdc_id"],
+                        "description": row["description"],
+                        "data_type": row["data_type"],
+                        "price_per_100g": row["price_per_100g"],
+                        "tags": row["tags"].split(", ") if row["tags"] else [],
+                    }
+                    for row in results
+                ],
+                "total_matches": len(results),
+            },
+            "human_summary": f"Found {len(results)} foods matching '{query}'",
+        })
+        return
 
     if not results:
         console.print(f"[yellow]No foods found matching '{query}'[/yellow]")
@@ -132,18 +198,53 @@ def search(
 @app.command()
 def info(
     fdc_id: int = typer.Argument(..., help="FDC ID of food to show"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show detailed nutrient information for a food."""
     db = get_db()
     with db.get_connection() as conn:
         food = FoodQueries.get_food_by_id(conn, fdc_id)
         if not food:
-            console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "info",
+                    "errors": [f"Food with FDC ID {fdc_id} not found"],
+                    "suggestions": ["Use 'mealplan search <query>' to find valid FDC IDs"],
+                })
+            else:
+                console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
             raise typer.Exit(1)
 
         nutrients = FoodQueries.get_food_nutrients(conn, fdc_id)
         price = PriceQueries.get_price(conn, fdc_id)
         tags = TagQueries.get_tags_for_food(conn, fdc_id)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "info",
+            "data": {
+                "fdc_id": fdc_id,
+                "description": food["description"],
+                "data_type": food["data_type"],
+                "is_active": bool(food["is_active"]),
+                "price_per_100g": price["price_per_100g"] if price else None,
+                "price_source": price["price_source"] if price else None,
+                "tags": tags,
+                "nutrients": [
+                    {
+                        "nutrient_id": row["nutrient_id"],
+                        "name": row["display_name"] or row["name"],
+                        "amount": row["amount"],
+                        "unit": row["unit"],
+                    }
+                    for row in nutrients
+                ],
+            },
+            "human_summary": f"{food['description']}: {len(nutrients)} nutrients",
+        })
+        return
 
     console.print(f"\n[bold]{food['description']}[/bold]")
     console.print(f"FDC ID: {fdc_id}")
@@ -199,9 +300,14 @@ def optimize(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Display KKT optimality conditions"
     ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Output as JSON with agent-friendly envelope"
+    ),
 ) -> None:
     """Run meal plan optimization."""
+    from mealplan.agent.response import create_response
     from mealplan.export.formatters import format_result
+    from mealplan.explore.diagnosis import diagnose_infeasibility
     from mealplan.optimizer.constraints import (
         deserialize_profile_json,
         load_profile_from_yaml,
@@ -217,7 +323,18 @@ def optimize(
     if profile_file:
         # Load from YAML file
         if not profile_file.exists():
-            console.print(f"[red]Profile file not found: {profile_file}[/red]")
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "optimize",
+                    "errors": [f"Profile file not found: {profile_file}"],
+                    "suggestions": [
+                        "Check the file path",
+                        "Use 'mealplan profile list' to see saved profiles",
+                    ],
+                })
+            else:
+                console.print(f"[red]Profile file not found: {profile_file}[/red]")
             raise typer.Exit(1)
         request = load_profile_from_yaml(profile_file)
         profile_name = profile_file.stem
@@ -226,18 +343,31 @@ def optimize(
         with db.get_connection() as conn:
             profile_row = ProfileQueries.get_profile_by_name(conn, profile)
             if not profile_row:
-                console.print(f"[red]Profile not found: {profile}[/red]")
+                if json_output:
+                    output_json({
+                        "success": False,
+                        "command": "optimize",
+                        "errors": [f"Profile not found: {profile}"],
+                        "suggestions": [
+                            "Use 'mealplan profile list' to see available profiles",
+                            "Use 'mealplan profile create' to create a new profile",
+                        ],
+                    })
+                else:
+                    console.print(f"[red]Profile not found: {profile}[/red]")
                 raise typer.Exit(1)
             profile_id = profile_row["profile_id"]
             profile_name = profile_row["name"]
             # Parse stored JSON into request
             constraints_data = json.loads(profile_row["constraints_json"])
             request = deserialize_profile_json(constraints_data)
-            console.print(f"[yellow]Loading profile '{profile}' from database[/yellow]")
+            if not json_output:
+                console.print(f"[yellow]Loading profile '{profile}' from database[/yellow]")
     else:
         # Use default request
         request = OptimizationRequest()
-        console.print("[yellow]Using default constraints[/yellow]")
+        if not json_output:
+            console.print("[yellow]Using default constraints[/yellow]")
 
     request.planning_days = days
     request.max_foods = max_foods
@@ -257,25 +387,34 @@ def optimize(
         total_foods = constraint_data["total_eligible_foods"]
         used_foods = len(constraint_data["food_ids"])
 
-        if constraint_data["was_sampled"]:
-            console.print(
-                f"[dim]Found {total_foods} eligible foods, randomly sampled {used_foods}[/dim]"
-            )
-        else:
-            console.print(f"[dim]Found {used_foods} eligible foods[/dim]")
+        if not json_output:
+            if constraint_data["was_sampled"]:
+                console.print(
+                    f"[dim]Found {total_foods} eligible foods, randomly sampled {used_foods}[/dim]"
+                )
+            else:
+                console.print(f"[dim]Found {used_foods} eligible foods[/dim]")
 
-        # Warn if include_tags filter resulted in no foods
-        if request.include_tags and total_foods == 0:
-            tags_str = ", ".join(request.include_tags)
-            console.print(
-                f"[yellow]Warning: No foods found with tags: {tags_str}[/yellow]"
-            )
-            console.print(
-                "[yellow]Use 'mealplan tags add <fdc_id> <tag>' to tag foods first.[/yellow]"
-            )
+            # Warn if include_tags filter resulted in no foods
+            if request.include_tags and total_foods == 0:
+                tags_str = ", ".join(request.include_tags)
+                console.print(
+                    f"[yellow]Warning: No foods found with tags: {tags_str}[/yellow]"
+                )
+                console.print(
+                    "[yellow]Use 'mealplan tags add <fdc_id> <tag>' to tag foods first.[/yellow]"
+                )
 
-        with console.status("[bold green]Optimizing..."):
+        if json_output:
             result = solve_diet_problem(request, conn, verbose=verbose)
+        else:
+            with console.status("[bold green]Optimizing..."):
+                result = solve_diet_problem(request, conn, verbose=verbose)
+
+        # If failed, run diagnosis
+        diagnosis = None
+        if not result.success:
+            diagnosis = diagnose_infeasibility(conn, request)
 
     # Save to history if requested
     run_id: Optional[int] = None
@@ -293,7 +432,122 @@ def optimize(
                 result_json,
             )
 
-    # Format output
+    # JSON output with agent-friendly envelope
+    if json_output:
+        response_data = {
+            "run_id": run_id,
+            "status": result.status,
+            "profile": profile_name,
+            "food_pool": {
+                "total_eligible": total_foods,
+                "used": used_foods,
+                "was_sampled": constraint_data["was_sampled"],
+            },
+        }
+
+        if result.success:
+            response_data["solution"] = {
+                "foods": [
+                    {
+                        "fdc_id": f.fdc_id,
+                        "description": f.description,
+                        "grams": round(f.grams, 1),
+                        "cost": round(f.cost, 2),
+                    }
+                    for f in result.foods
+                ],
+                "nutrients": {
+                    str(n.nutrient_id): {
+                        "name": n.name,
+                        "amount": round(n.amount, 2),
+                        "unit": n.unit,
+                        "min": n.min_constraint,
+                        "max": n.max_constraint,
+                        "satisfied": n.satisfied,
+                    }
+                    for n in result.nutrients
+                },
+                "total_cost": round(result.total_cost, 2) if result.total_cost else None,
+            }
+
+            # Add binding constraints info
+            if result.kkt_analysis:
+                binding = [
+                    c for c in result.kkt_analysis.nutrient_constraints if c.is_binding
+                ]
+                response_data["binding_constraints"] = [
+                    {
+                        "type": c.constraint_type,
+                        "name": c.name,
+                        "bound": c.bound,
+                        "value": round(c.value, 2),
+                    }
+                    for c in binding
+                ]
+
+                foods_at_limit = [
+                    c for c in result.kkt_analysis.binding_food_bounds
+                    if c.constraint_type == "food_upper"
+                ]
+                response_data["foods_at_limit"] = [
+                    {"name": c.name, "grams": round(c.value, 1), "limit": round(c.bound, 1)}
+                    for c in foods_at_limit[:10]
+                ]
+
+        # Add suggestions
+        suggestions = []
+        warnings = []
+
+        if result.success:
+            # Check for binding constraints
+            if result.kkt_analysis:
+                binding = [c for c in result.kkt_analysis.nutrient_constraints if c.is_binding]
+                if binding:
+                    for c in binding[:3]:
+                        if "min" in c.constraint_type.lower():
+                            suggestions.append(
+                                f"{c.name} is at minimum - consider relaxing to allow more variety"
+                            )
+                        else:
+                            suggestions.append(
+                                f"{c.name} is at maximum - consider increasing limit"
+                            )
+
+            # Cost suggestion
+            if result.total_cost and result.total_cost > 15:
+                suggestions.append(
+                    "Daily cost is high - try 'mealplan optimize --minimize-cost' or expand food pool"
+                )
+
+            human_summary = (
+                f"Optimal solution: {len(result.foods)} foods, "
+                f"{sum(n.amount for n in result.nutrients if n.nutrient_id == 1008):.0f} kcal"
+            )
+            if result.total_cost:
+                human_summary += f", ${result.total_cost:.2f}/day"
+
+        else:
+            human_summary = f"Optimization failed: {result.message}"
+            if diagnosis:
+                response_data["diagnosis"] = diagnosis
+                for conflict in diagnosis.get("likely_conflicts", []):
+                    suggestions.extend(
+                        [s.get("detail", s.get("action", "")) for s in conflict.get("suggestions", [])]
+                    )
+                for s in diagnosis.get("suggestions", []):
+                    suggestions.append(s.get("detail", s.get("action", "")))
+
+        output_json({
+            "success": result.success,
+            "command": "optimize",
+            "data": response_data,
+            "warnings": warnings,
+            "suggestions": suggestions,
+            "human_summary": human_summary,
+        })
+        return
+
+    # Format output (non-JSON)
     formatted = format_result(result, output, profile_name, run_id, console)
     if formatted:
         console.print(formatted)
@@ -305,6 +559,26 @@ def optimize(
         console.print()  # Blank line before KKT section
         kkt_formatter = KKTFormatter(console)
         kkt_formatter.format(result.kkt_analysis)
+
+    # Show diagnosis if failed
+    if not result.success and diagnosis:
+        console.print()
+        console.print(Panel("[bold red]Infeasibility Diagnosis[/bold red]"))
+
+        if diagnosis.get("food_pool_issues"):
+            fpi = diagnosis["food_pool_issues"]
+            console.print(f"[yellow]Food pool: {fpi.get('problem', 'Issue detected')}[/yellow]")
+            for cause in fpi.get("causes", []):
+                console.print(f"  - {cause}")
+
+        for conflict in diagnosis.get("likely_conflicts", []):
+            console.print(f"\n[yellow]Conflict:[/yellow] {' AND '.join(conflict['constraints'])}")
+            console.print(f"  {conflict['explanation']}")
+            for s in conflict.get("suggestions", []):
+                console.print(f"  → Try: {s.get('detail', s.get('command', ''))}")
+
+        for s in diagnosis.get("suggestions", []):
+            console.print(f"\n[cyan]Suggestion:[/cyan] {s.get('detail', s.get('action', ''))}")
 
 
 @app.command("export-for-llm")
@@ -415,11 +689,32 @@ def export_for_llm(
 @app.command()
 def history(
     limit: int = typer.Option(10, "--limit", "-n", help="Number of runs to show"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show optimization run history."""
     db = get_db()
     with db.get_connection() as conn:
         runs = OptimizationRunQueries.list_runs(conn, limit)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "history",
+            "data": {
+                "runs": [
+                    {
+                        "run_id": run["run_id"],
+                        "date": str(run["run_date"]),
+                        "profile": run["profile_name"],
+                        "status": run["status"],
+                        "total_cost": run["total_cost"],
+                    }
+                    for run in runs
+                ],
+            },
+            "human_summary": f"{len(runs)} optimization runs",
+        })
+        return
 
     if not runs:
         console.print("[yellow]No optimization runs found[/yellow]")
@@ -447,6 +742,370 @@ def history(
 
 
 # ============================================================================
+# Schema Subcommands (for LLM agents)
+# ============================================================================
+
+
+@schema_app.command("constraints")
+def schema_constraints() -> None:
+    """Show constraint schema for LLM agents."""
+    from mealplan.agent.schema import get_constraint_schema
+    output_json(get_constraint_schema())
+
+
+@schema_app.command("nutrients")
+def schema_nutrients() -> None:
+    """List all available nutrients with metadata."""
+    from mealplan.agent.schema import get_nutrient_list
+    output_json(get_nutrient_list())
+
+
+@schema_app.command("tags")
+def schema_tags() -> None:
+    """List all tags in the database."""
+    from mealplan.agent.schema import get_tag_list
+    db = get_db()
+    with db.get_connection() as conn:
+        output_json(get_tag_list(conn))
+
+
+@schema_app.command("foods")
+def schema_foods() -> None:
+    """Show food filter schema."""
+    from mealplan.agent.schema import get_food_filter_schema
+    output_json(get_food_filter_schema())
+
+
+@schema_app.command("all")
+def schema_all() -> None:
+    """Export complete schema documentation."""
+    from mealplan.agent.schema import get_full_schema
+    db = get_db()
+    with db.get_connection() as conn:
+        output_json(get_full_schema(conn))
+
+
+# ============================================================================
+# Explore Subcommands
+# ============================================================================
+
+
+@explore_app.command("foods")
+def explore_foods_cmd(
+    query: Optional[str] = typer.Argument(None, help="Text search query"),
+    min_protein: Optional[float] = typer.Option(None, "--min-protein", help="Min protein per 100g"),
+    max_protein: Optional[float] = typer.Option(None, "--max-protein", help="Max protein per 100g"),
+    min_calories: Optional[float] = typer.Option(None, "--min-calories", help="Min calories per 100g"),
+    max_calories: Optional[float] = typer.Option(None, "--max-calories", help="Max calories per 100g"),
+    min_cost: Optional[float] = typer.Option(None, "--min-cost", help="Min cost per 100g"),
+    max_cost: Optional[float] = typer.Option(None, "--max-cost", help="Max cost per 100g"),
+    has_tag: Optional[str] = typer.Option(None, "--tag", help="Filter to foods with this tag"),
+    has_price: Optional[bool] = typer.Option(None, "--has-price/--no-price", help="Filter by price availability"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum results"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Search and filter foods with nutrient criteria."""
+    from mealplan.explore.foods import FoodFilter, explore_foods
+
+    filters = FoodFilter(
+        query=query,
+        min_protein=min_protein,
+        max_protein=max_protein,
+        min_calories=min_calories,
+        max_calories=max_calories,
+        min_cost=min_cost,
+        max_cost=max_cost,
+        has_tag=has_tag,
+        has_price=has_price,
+        limit=limit,
+    )
+
+    db = get_db()
+    with db.get_connection() as conn:
+        results = explore_foods(conn, filters)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "explore foods",
+            "data": {
+                "filters": {
+                    "query": query,
+                    "min_protein": min_protein,
+                    "max_protein": max_protein,
+                    "min_calories": min_calories,
+                    "max_calories": max_calories,
+                    "min_cost": min_cost,
+                    "max_cost": max_cost,
+                    "has_tag": has_tag,
+                    "has_price": has_price,
+                },
+                "results": results,
+                "total_matches": len(results),
+            },
+            "human_summary": f"Found {len(results)} foods matching filters",
+        })
+        return
+
+    if not results:
+        console.print("[yellow]No foods match the specified filters[/yellow]")
+        return
+
+    table = Table(title="Foods")
+    table.add_column("FDC ID", style="cyan")
+    table.add_column("Description")
+    table.add_column("Protein", justify="right")
+    table.add_column("Calories", justify="right")
+    table.add_column("Price", justify="right", style="green")
+    table.add_column("Tags", style="blue")
+
+    for food in results:
+        protein = f"{food['protein_per_100g']:.1f}g" if food["protein_per_100g"] else "-"
+        calories = f"{food['calories_per_100g']:.0f}" if food["calories_per_100g"] else "-"
+        price = f"${food['price_per_100g']:.2f}" if food["price_per_100g"] else "-"
+        tags = ", ".join(food["tags"]) if food["tags"] else ""
+
+        table.add_row(
+            str(food["fdc_id"]),
+            food["description"][:50],
+            protein,
+            calories,
+            price,
+            tags,
+        )
+
+    console.print(table)
+    console.print(f"[dim]Showing {len(results)} results[/dim]")
+
+
+@explore_app.command("high-nutrient")
+def explore_high_nutrient(
+    nutrient: str = typer.Argument(..., help="Nutrient name (e.g., protein, iron, vitamin_d)"),
+    min_amount: Optional[float] = typer.Option(None, "--min", help="Minimum amount per 100g"),
+    max_amount: Optional[float] = typer.Option(None, "--max", help="Maximum amount per 100g"),
+    has_tag: Optional[str] = typer.Option(None, "--tag", help="Filter to foods with this tag"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum results"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Find foods high in a specific nutrient."""
+    from mealplan.explore.foods import find_high_nutrient_foods
+    from mealplan.data.nutrient_ids import NUTRIENT_IDS, NUTRIENT_UNITS
+
+    # Validate nutrient name
+    nutrient_lower = nutrient.lower().replace(" ", "_").replace("-", "_")
+    if nutrient_lower not in NUTRIENT_IDS:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "explore high-nutrient",
+                "errors": [f"Unknown nutrient: {nutrient}"],
+                "suggestions": [f"Available nutrients: {', '.join(sorted(NUTRIENT_IDS.keys())[:10])}..."],
+            })
+        else:
+            console.print(f"[red]Unknown nutrient: {nutrient}[/red]")
+            console.print(f"[dim]Available: {', '.join(sorted(NUTRIENT_IDS.keys())[:10])}...[/dim]")
+        raise typer.Exit(1)
+
+    db = get_db()
+    with db.get_connection() as conn:
+        results = find_high_nutrient_foods(
+            conn, nutrient, min_amount, max_amount, has_tag, limit
+        )
+
+    unit = NUTRIENT_UNITS.get(NUTRIENT_IDS[nutrient_lower], "")
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "explore high-nutrient",
+            "data": {
+                "nutrient": nutrient,
+                "unit": unit,
+                "filters": {"min": min_amount, "max": max_amount, "tag": has_tag},
+                "results": results,
+            },
+            "human_summary": f"Found {len(results)} foods ranked by {nutrient} content",
+        })
+        return
+
+    if not results:
+        console.print(f"[yellow]No foods found with {nutrient} content[/yellow]")
+        return
+
+    table = Table(title=f"Foods High in {nutrient.replace('_', ' ').title()}")
+    table.add_column("FDC ID", style="cyan")
+    table.add_column("Description")
+    table.add_column(f"{nutrient.title()}/{unit}", justify="right", style="green")
+    table.add_column("Calories", justify="right")
+    table.add_column("Price", justify="right")
+
+    for food in results:
+        calories = f"{food['calories_per_100g']:.0f}" if food["calories_per_100g"] else "-"
+        price = f"${food['price_per_100g']:.2f}" if food["price_per_100g"] else "-"
+
+        table.add_row(
+            str(food["fdc_id"]),
+            food["description"][:45],
+            f"{food['amount_per_100g']:.1f}",
+            calories,
+            price,
+        )
+
+    console.print(table)
+
+
+@explore_app.command("compare")
+def explore_compare(
+    fdc_ids: list[int] = typer.Argument(..., help="FDC IDs to compare"),
+    nutrients: Optional[str] = typer.Option(
+        None, "--nutrients", help="Comma-separated nutrient names to compare"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Compare nutrient content of multiple foods side-by-side."""
+    from mealplan.explore.foods import compare_foods
+
+    nutrient_list = None
+    if nutrients:
+        nutrient_list = [n.strip() for n in nutrients.split(",")]
+
+    db = get_db()
+    with db.get_connection() as conn:
+        result = compare_foods(conn, fdc_ids, nutrient_list)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "explore compare",
+            "data": result,
+            "human_summary": f"Comparing {len(result['foods'])} foods across {len(result['comparison'])} nutrients",
+        })
+        return
+
+    if not result["foods"]:
+        console.print("[yellow]No foods found[/yellow]")
+        return
+
+    # Build comparison table
+    table = Table(title="Food Comparison (per 100g)")
+    table.add_column("Nutrient")
+    for food in result["foods"]:
+        table.add_column(food["description"][:25], justify="right")
+
+    for row in result["comparison"]:
+        values = [
+            f"{row['values'].get(f['fdc_id'], '-'):.1f}" if row['values'].get(f['fdc_id']) else "-"
+            for f in result["foods"]
+        ]
+        table.add_row(f"{row['name']} ({row.get('unit', '')})", *values)
+
+    console.print(table)
+
+
+@explore_app.command("whatif")
+def explore_whatif(
+    base_run: str = typer.Option("latest", "--base", help="Base run ID or 'latest'"),
+    add: Optional[list[str]] = typer.Option(None, "--add", help="Add constraint (e.g., 'protein:min:180')"),
+    remove: Optional[list[str]] = typer.Option(None, "--remove", help="Remove nutrient constraint"),
+    calories_min: Optional[float] = typer.Option(None, "--cal-min", help="New calorie minimum"),
+    calories_max: Optional[float] = typer.Option(None, "--cal-max", help="New calorie maximum"),
+    exclude_food: Optional[list[int]] = typer.Option(None, "--exclude-food", help="Exclude food by FDC ID"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Include KKT analysis"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Run what-if analysis by modifying constraints from a baseline."""
+    from mealplan.explore.whatif import run_whatif_analysis
+
+    base_id = -1 if base_run.lower() == "latest" else int(base_run)
+
+    new_calorie_range = None
+    if calories_min is not None or calories_max is not None:
+        # Need to get current range and modify
+        new_calorie_range = (
+            calories_min if calories_min is not None else 1800,
+            calories_max if calories_max is not None else 2200,
+        )
+
+    db = get_db()
+    with db.get_connection() as conn:
+        result = run_whatif_analysis(
+            conn,
+            base_id,
+            add_constraints=add,
+            remove_constraints=remove,
+            new_calorie_range=new_calorie_range,
+            remove_foods=exclude_food,
+            verbose=verbose,
+        )
+
+    if json_output:
+        output_json({
+            "success": result["success"],
+            "command": "explore whatif",
+            "data": result,
+            "human_summary": (
+                f"What-if analysis: {result['result']['status']}"
+                if result["success"] else result.get("error", "Analysis failed")
+            ),
+        })
+        return
+
+    if not result["success"]:
+        console.print(f"[red]{result.get('error', 'What-if analysis failed')}[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(f"[bold]What-If Analysis[/bold] (base run: {result['base_run_id']})"))
+
+    # Show modifications
+    mods = result["modifications"]
+    if mods.get("add_constraints"):
+        console.print(f"[cyan]Added:[/cyan] {', '.join(mods['add_constraints'])}")
+    if mods.get("remove_constraints"):
+        console.print(f"[cyan]Removed:[/cyan] {', '.join(mods['remove_constraints'])}")
+    if mods.get("new_calorie_range"):
+        console.print(f"[cyan]Calories:[/cyan] {mods['new_calorie_range']}")
+    if mods.get("remove_foods"):
+        console.print(f"[cyan]Excluded foods:[/cyan] {mods['remove_foods']}")
+
+    console.print()
+
+    res = result["result"]
+    if res["success"]:
+        console.print(f"[green]Status: {res['status']}[/green]")
+
+        # Show foods
+        table = Table(title="Modified Solution")
+        table.add_column("Food")
+        table.add_column("Grams", justify="right")
+        table.add_column("Cost", justify="right")
+
+        for f in res["foods"]:
+            table.add_row(
+                f["description"][:40],
+                f"{f['grams']:.1f}",
+                f"${f['cost']:.2f}",
+            )
+
+        console.print(table)
+
+        # Show comparison
+        comp = result.get("comparison", {})
+        if comp.get("foods_added") or comp.get("foods_removed") or comp.get("cost_change"):
+            console.print("\n[bold]Changes from baseline:[/bold]")
+            if comp.get("foods_added"):
+                console.print(f"  [green]+ Added {len(comp['foods_added'])} foods[/green]")
+            if comp.get("foods_removed"):
+                console.print(f"  [red]- Removed {len(comp['foods_removed'])} foods[/red]")
+            if comp.get("cost_change") is not None:
+                sign = "+" if comp["cost_change"] > 0 else ""
+                color = "red" if comp["cost_change"] > 0 else "green"
+                console.print(f"  [{color}]Cost: {sign}${comp['cost_change']:.2f}[/{color}]")
+    else:
+        console.print(f"[red]Status: {res['status']}[/red]")
+        console.print(f"[red]{res['message']}[/red]")
+
+
+# ============================================================================
 # Prices Subcommands
 # ============================================================================
 
@@ -457,6 +1116,7 @@ def prices_add(
     price_per_100g: float = typer.Argument(..., help="Price per 100 grams"),
     source: Optional[str] = typer.Option(None, "--source", "-s", help="Price source"),
     notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Notes"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Add or update price for a food."""
     db = get_db()
@@ -464,15 +1124,35 @@ def prices_add(
         # Verify food exists
         food = FoodQueries.get_food_by_id(conn, fdc_id)
         if not food:
-            console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "prices add",
+                    "errors": [f"Food with FDC ID {fdc_id} not found"],
+                })
+            else:
+                console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
             raise typer.Exit(1)
 
         PriceQueries.upsert_price(conn, fdc_id, price_per_100g, source, notes)
 
-    console.print(
-        f"[green]Price set for '{food['description'][:50]}': "
-        f"${price_per_100g:.2f}/100g[/green]"
-    )
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "prices add",
+            "data": {
+                "fdc_id": fdc_id,
+                "description": food["description"],
+                "price_per_100g": price_per_100g,
+                "source": source,
+            },
+            "human_summary": f"Price set: ${price_per_100g:.2f}/100g for {food['description'][:40]}",
+        })
+    else:
+        console.print(
+            f"[green]Price set for '{food['description'][:50]}': "
+            f"${price_per_100g:.2f}/100g[/green]"
+        )
 
 
 @prices_app.command("import")
@@ -510,6 +1190,7 @@ def prices_list(
         False, "--missing", "-m", help="Show foods without prices"
     ),
     limit: int = typer.Option(50, "--limit", "-n", help="Maximum results"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """List foods with prices or missing prices."""
     db = get_db()
@@ -520,6 +1201,23 @@ def prices_list(
         else:
             results = PriceQueries.get_foods_with_prices(conn)[:limit]
             title = "Foods With Prices"
+
+    if json_output:
+        data = []
+        for row in results:
+            item = {"fdc_id": row["fdc_id"], "description": row["description"]}
+            if not missing:
+                item["price_per_100g"] = row["price_per_100g"]
+                item["source"] = row["price_source"]
+            data.append(item)
+
+        output_json({
+            "success": True,
+            "command": "prices list",
+            "data": {"foods": data, "showing_missing": missing},
+            "human_summary": f"{len(results)} foods {'without' if missing else 'with'} prices",
+        })
+        return
 
     if not results:
         if missing:
@@ -559,31 +1257,55 @@ def prices_list(
 def tags_add(
     fdc_id: int = typer.Argument(..., help="FDC ID of food"),
     tag: str = typer.Argument(..., help="Tag to add"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Add a tag to a food."""
     db = get_db()
     with db.get_connection() as conn:
         food = FoodQueries.get_food_by_id(conn, fdc_id)
         if not food:
-            console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "tags add",
+                    "errors": [f"Food with FDC ID {fdc_id} not found"],
+                })
+            else:
+                console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
             raise typer.Exit(1)
 
         TagQueries.add_tag(conn, fdc_id, tag)
 
-    console.print(f"[green]Added tag '{tag}' to '{food['description'][:50]}'[/green]")
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "tags add",
+            "data": {"fdc_id": fdc_id, "tag": tag, "description": food["description"]},
+            "human_summary": f"Added tag '{tag}' to {food['description'][:40]}",
+        })
+    else:
+        console.print(f"[green]Added tag '{tag}' to '{food['description'][:50]}'[/green]")
 
 
 @tags_app.command("remove")
 def tags_remove(
     fdc_id: int = typer.Argument(..., help="FDC ID of food"),
     tag: str = typer.Argument(..., help="Tag to remove"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Remove a tag from a food."""
     db = get_db()
     with db.get_connection() as conn:
         removed = TagQueries.remove_tag(conn, fdc_id, tag)
 
-    if removed:
+    if json_output:
+        output_json({
+            "success": removed,
+            "command": "tags remove",
+            "data": {"fdc_id": fdc_id, "tag": tag, "removed": removed},
+            "human_summary": f"Removed tag '{tag}'" if removed else f"Tag '{tag}' not found",
+        })
+    elif removed:
         console.print(f"[green]Removed tag '{tag}' from food {fdc_id}[/green]")
     else:
         console.print(f"[yellow]Tag '{tag}' not found on food {fdc_id}[/yellow]")
@@ -595,6 +1317,7 @@ def tags_list(
     fdc_id: Optional[int] = typer.Option(
         None, "--food", "-f", help="Show tags for food"
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """List tags or foods with a specific tag."""
     db = get_db()
@@ -603,11 +1326,26 @@ def tags_list(
             # Show tags for a specific food
             food = FoodQueries.get_food_by_id(conn, fdc_id)
             if not food:
-                console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
+                if json_output:
+                    output_json({
+                        "success": False,
+                        "command": "tags list",
+                        "errors": [f"Food with FDC ID {fdc_id} not found"],
+                    })
+                else:
+                    console.print(f"[red]Food with FDC ID {fdc_id} not found[/red]")
                 raise typer.Exit(1)
 
             tags = TagQueries.get_tags_for_food(conn, fdc_id)
-            if tags:
+
+            if json_output:
+                output_json({
+                    "success": True,
+                    "command": "tags list",
+                    "data": {"fdc_id": fdc_id, "description": food["description"], "tags": tags},
+                    "human_summary": f"{len(tags)} tags for {food['description'][:40]}",
+                })
+            elif tags:
                 console.print(f"Tags for '{food['description'][:50]}':")
                 for t in tags:
                     console.print(f"  - {t}")
@@ -617,6 +1355,19 @@ def tags_list(
         elif tag:
             # Show foods with a specific tag
             foods = TagQueries.get_foods_with_tag(conn, tag)
+
+            if json_output:
+                output_json({
+                    "success": True,
+                    "command": "tags list",
+                    "data": {
+                        "tag": tag,
+                        "foods": [{"fdc_id": f["fdc_id"], "description": f["description"]} for f in foods],
+                    },
+                    "human_summary": f"{len(foods)} foods with tag '{tag}'",
+                })
+                return
+
             if not foods:
                 console.print(f"[yellow]No foods with tag '{tag}'[/yellow]")
                 return
@@ -633,6 +1384,16 @@ def tags_list(
         else:
             # Show all tags with counts
             all_tags = TagQueries.get_all_tags(conn)
+
+            if json_output:
+                output_json({
+                    "success": True,
+                    "command": "tags list",
+                    "data": {"tags": [{"tag": t, "count": c} for t, c in all_tags]},
+                    "human_summary": f"{len(all_tags)} unique tags",
+                })
+                return
+
             if not all_tags:
                 console.print("[yellow]No tags defined[/yellow]")
                 return
@@ -812,10 +1573,18 @@ def profile_create(
     description: Optional[str] = typer.Option(
         None, "--description", "-d", help="Profile description"
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Create a constraint profile from YAML file."""
     if not from_file.exists():
-        console.print(f"[red]File not found: {from_file}[/red]")
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "profile create",
+                "errors": [f"File not found: {from_file}"],
+            })
+        else:
+            console.print(f"[red]File not found: {from_file}[/red]")
         raise typer.Exit(1)
 
     # Read and validate YAML
@@ -827,7 +1596,14 @@ def profile_create(
     try:
         load_profile_from_yaml(from_file)
     except Exception as e:
-        console.print(f"[red]Invalid profile YAML: {e}[/red]")
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "profile create",
+                "errors": [f"Invalid profile YAML: {e}"],
+            })
+        else:
+            console.print(f"[red]Invalid profile YAML: {e}[/red]")
         raise typer.Exit(1)
 
     # Store as JSON for flexibility
@@ -841,22 +1617,59 @@ def profile_create(
         # Check if profile already exists
         existing = ProfileQueries.get_profile_by_name(conn, name)
         if existing:
-            console.print(f"[red]Profile '{name}' already exists[/red]")
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "profile create",
+                    "errors": [f"Profile '{name}' already exists"],
+                    "suggestions": ["Use a different name or delete the existing profile"],
+                })
+            else:
+                console.print(f"[red]Profile '{name}' already exists[/red]")
             raise typer.Exit(1)
 
         profile_id = ProfileQueries.create_profile(
             conn, name, constraints_json, description
         )
 
-    console.print(f"[green]Created profile '{name}' (ID: {profile_id})[/green]")
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "profile create",
+            "data": {"profile_id": profile_id, "name": name},
+            "human_summary": f"Created profile '{name}'",
+        })
+    else:
+        console.print(f"[green]Created profile '{name}' (ID: {profile_id})[/green]")
 
 
 @profile_app.command("list")
-def profile_list() -> None:
+def profile_list(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """List all saved constraint profiles."""
     db = get_db()
     with db.get_connection() as conn:
         profiles = ProfileQueries.list_profiles(conn)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "profile list",
+            "data": {
+                "profiles": [
+                    {
+                        "profile_id": p["profile_id"],
+                        "name": p["name"],
+                        "description": p["description"],
+                        "created_at": str(p["created_at"]),
+                    }
+                    for p in profiles
+                ],
+            },
+            "human_summary": f"{len(profiles)} profiles",
+        })
+        return
 
     if not profiles:
         console.print("[yellow]No profiles defined[/yellow]")
@@ -880,6 +1693,7 @@ def profile_list() -> None:
 @profile_app.command("show")
 def profile_show(
     name: str = typer.Argument(..., help="Profile name"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show details of a constraint profile."""
     db = get_db()
@@ -887,8 +1701,32 @@ def profile_show(
         profile = ProfileQueries.get_profile_by_name(conn, name)
 
     if not profile:
-        console.print(f"[red]Profile '{name}' not found[/red]")
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "profile show",
+                "errors": [f"Profile '{name}' not found"],
+            })
+        else:
+            console.print(f"[red]Profile '{name}' not found[/red]")
         raise typer.Exit(1)
+
+    constraints = json.loads(profile["constraints_json"])
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "profile show",
+            "data": {
+                "profile_id": profile["profile_id"],
+                "name": profile["name"],
+                "description": profile["description"],
+                "created_at": str(profile["created_at"]),
+                "constraints": constraints,
+            },
+            "human_summary": f"Profile '{name}'",
+        })
+        return
 
     console.print(f"\n[bold]{profile['name']}[/bold]")
     if profile["description"]:
@@ -896,9 +1734,7 @@ def profile_show(
     console.print(f"Created: {profile['created_at']}")
     console.print("\nConstraints:")
 
-    constraints = json.loads(profile["constraints_json"])
     import yaml
-
     console.print(yaml.dump(constraints, default_flow_style=False))
 
 
@@ -906,23 +1742,39 @@ def profile_show(
 def profile_delete(
     name: str = typer.Argument(..., help="Profile name"),
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Delete a constraint profile."""
     db = get_db()
     with db.get_connection() as conn:
         profile = ProfileQueries.get_profile_by_name(conn, name)
         if not profile:
-            console.print(f"[red]Profile '{name}' not found[/red]")
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "profile delete",
+                    "errors": [f"Profile '{name}' not found"],
+                })
+            else:
+                console.print(f"[red]Profile '{name}' not found[/red]")
             raise typer.Exit(1)
 
-        if not force:
+        if not force and not json_output:
             confirm = typer.confirm(f"Delete profile '{name}'?")
             if not confirm:
                 raise typer.Abort()
 
         ProfileQueries.delete_profile(conn, name)
 
-    console.print(f"[green]Deleted profile '{name}'[/green]")
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "profile delete",
+            "data": {"name": name},
+            "human_summary": f"Deleted profile '{name}'",
+        })
+    else:
+        console.print(f"[green]Deleted profile '{name}'[/green]")
 
 
 if __name__ == "__main__":
