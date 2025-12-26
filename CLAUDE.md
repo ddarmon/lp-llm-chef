@@ -5,10 +5,14 @@ with code in this repository.
 
 ## Project Overview
 
-`lp-llm-chef` is a personal meal planning optimization system that uses
-quadratic programming (QP) to find diverse food combinations satisfying
-nutritional constraints. It uses USDA FoodData Central as its nutrition
-database and can generate prompts for Claude to create recipes.
+`lp-llm-chef` is a meal planning optimization system designed to be used
+both by humans and as a **tool for LLM agents**. It uses quadratic
+programming (QP) to find diverse food combinations satisfying nutritional
+constraints, with USDA FoodData Central as its nutrition database.
+
+**Key capability**: All CLI commands support `--json` output with a
+structured response envelope, making this tool usable by Claude Code,
+Codex CLI, and other LLM agents for iterative diet planning.
 
 ### Optimization Modes
 
@@ -54,23 +58,49 @@ Interactive scripts for new users:
 
 ## CLI Usage
 
+### Core Commands
 ``` bash
-mealplan init <usda-csv-path>      # Initialize database from USDA data
-mealplan search <query>             # Search foods (shows price/tags)
-mealplan info <fdc_id>              # Show food nutrients
-mealplan optimize                   # Run optimization (feasibility mode)
-mealplan optimize --minimize-cost   # Run with cost minimization
-mealplan optimize --max-foods 500   # Increase food pool (default 300)
-mealplan optimize --profile <name>  # Use a constraint profile
-mealplan optimize --file <yaml>     # Use YAML file directly
-mealplan optimize --verbose         # Show KKT optimality conditions
-mealplan export-for-llm latest      # Generate Claude prompt from last run
-mealplan prices add <fdc_id> <price>
-mealplan tags add <fdc_id> <tag>
-mealplan tags list --tag <tag>      # List foods with a tag
-mealplan tags interactive           # Interactive mode to search and tag
-mealplan profile create <name> --from-file <yaml>
-mealplan profile wizard             # Interactive profile creation wizard
+uv run mealplan init <usda-csv-path>      # Initialize database from USDA data
+uv run mealplan search <query>             # Search foods (shows price/tags)
+uv run mealplan info <fdc_id>              # Show food nutrients
+uv run mealplan optimize                   # Run optimization (feasibility mode)
+uv run mealplan optimize --minimize-cost   # Run with cost minimization
+uv run mealplan optimize --max-foods 500   # Increase food pool (default 300)
+uv run mealplan optimize --profile <name>  # Use a constraint profile
+uv run mealplan optimize --file <yaml>     # Use YAML file directly
+uv run mealplan optimize --verbose         # Show KKT optimality conditions
+uv run mealplan export-for-llm latest      # Generate Claude prompt from last run
+uv run mealplan prices add <fdc_id> <price>
+uv run mealplan tags add <fdc_id> <tag>
+uv run mealplan tags list --tag <tag>      # List foods with a tag
+uv run mealplan tags interactive           # Interactive mode to search and tag
+uv run mealplan profile create <name> --from-file <yaml>
+uv run mealplan profile wizard             # Interactive profile creation wizard
+```
+
+### Agent/LLM Commands
+
+Schema export (for LLMs to understand constraint vocabulary):
+``` bash
+uv run mealplan schema constraints         # JSON schema for constraint format
+uv run mealplan schema nutrients           # All nutrients with IDs, units, ranges
+uv run mealplan schema tags                # All tags in database
+uv run mealplan schema all                 # Complete schema documentation
+```
+
+Food exploration (for iterative diet design):
+``` bash
+uv run mealplan explore foods "salmon" --min-protein 25 --json
+uv run mealplan explore high-nutrient protein --min 30 --tag staple
+uv run mealplan explore compare 170567 170568 --nutrients protein,fat
+uv run mealplan explore whatif --base latest --add "fiber:min:40" --json
+```
+
+JSON output (add `--json` to any command):
+``` bash
+uv run mealplan search chicken --json      # Structured search results
+uv run mealplan optimize --json            # Solution + suggestions + diagnosis
+uv run mealplan info 170567 --json         # Nutrient data as JSON
 ```
 
 ## Architecture
@@ -115,6 +145,20 @@ mealplan profile wizard             # Interactive profile creation wizard
     -   Auto-generated preparation notes based on detected states
     -   `clean_food_name()` simplifies USDA names for CLI display
     -   `clean_food_name_with_context()` preserves prep state for LLM prompts
+
+-   **`agent/`**: Agentic interface layer for LLM tool usage:
+    -   `response.py`: `AgentResponse` envelope with success, data, errors,
+        warnings, suggestions, and human_summary fields
+    -   `schema.py`: Schema export functions for constraint format, nutrient
+        vocabulary, tag lists, and food filter options
+
+-   **`explore/`**: Food discovery and iterative analysis:
+    -   `foods.py`: `explore_foods()` with filters, `compare_foods()`,
+        `find_high_nutrient_foods()`
+    -   `whatif.py`: `run_whatif_analysis()` for modifying constraints from
+        a baseline optimization run
+    -   `diagnosis.py`: `diagnose_infeasibility()` for explaining why
+        optimization fails and suggesting fixes
 
 ### Database Schema
 
@@ -171,3 +215,33 @@ Example profiles in `examples/constraints/`:
     optimality conditions (primal/dual feasibility, complementary
     slackness, stationarity) with full Lagrange multipliers for all
     binding constraints including variable bounds
+
+## Using as an LLM Tool
+
+This tool is designed to be invoked by LLM agents (Claude Code, Codex CLI,
+etc.) for iterative diet planning. The workflow:
+
+1.  **Get schema**: `uv run mealplan schema all` returns constraint vocabulary
+2.  **LLM translates goals**: User says "I want to lose weight, vegetarian"
+    → LLM outputs structured constraints JSON
+3.  **Optimize**: `uv run mealplan optimize --json` returns solution + suggestions
+4.  **Iterate**: `uv run mealplan explore whatif --add "protein:min:180" --json`
+5.  **Diagnose failures**: If infeasible, response includes diagnosis with
+    suggested constraint relaxations
+
+### JSON Response Envelope
+
+All `--json` output uses this structure:
+```json
+{
+  "success": true,
+  "command": "optimize",
+  "data": { ... },
+  "errors": [],
+  "warnings": [],
+  "suggestions": ["Protein is at minimum - consider relaxing"],
+  "human_summary": "Optimal: 12 foods, 1847 kcal, $8.50/day"
+}
+```
+
+The `human_summary` field ensures transparency for the person watching.

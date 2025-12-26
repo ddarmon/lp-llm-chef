@@ -1,9 +1,10 @@
 # lp-llm-chef
 
-A personal meal planning system that uses linear/quadratic programming
-to find diverse combinations of foods that satisfy your nutritional
-constraints. Optionally integrates with Claude to generate recipes from
-the optimized food list.
+A meal planning system that uses linear/quadratic programming to find
+diverse combinations of foods satisfying nutritional constraints.
+Designed to work both as a personal CLI tool and as an **agentic tool
+for LLMs** (Claude Code, Codex CLI, etc.) to iteratively design diets
+from natural language goals.
 
 ## Features
 
@@ -22,6 +23,13 @@ the optimized food list.
     generate meal plans and recipes
 -   **Food tagging**: Tag foods for filtering (breakfast, protein,
     exclude, etc.)
+-   **Agentic interface**: All commands support `--json` output with
+    structured responses for LLM tool use
+-   **Schema export**: LLMs can query available nutrients, tags, and
+    constraint format
+-   **What-if analysis**: Iterate on solutions by modifying constraints
+-   **Infeasibility diagnosis**: When optimization fails, explains why
+    and suggests fixes
 
 ## Installation
 
@@ -81,7 +89,7 @@ Get the "Full Download of All Data Types" in CSV format and extract it.
 #### 2. Initialize the Database
 
 ``` bash
-mealplan init ~/Downloads/FoodData_Central_csv_2024-04-18/
+uv run mealplan init ~/Downloads/FoodData_Central_csv_2024-04-18/
 ```
 
 This loads \~10,000 foods from Foundation Foods and SR Legacy datasets
@@ -91,20 +99,20 @@ into a local SQLite database at `~/.mealplan/mealplan.db`.
 
 ``` bash
 # Default: feasibility mode (finds diverse, nutritionally complete foods)
-mealplan optimize
+uv run mealplan optimize
 
 # With a constraint profile
-mealplan optimize --profile cutting
+uv run mealplan optimize --profile cutting
 
 # Limit number of foods considered (default 300, for speed)
-mealplan optimize --max-foods 500
+uv run mealplan optimize --max-foods 500
 
 # Output as JSON or Markdown
-mealplan optimize --output json
-mealplan optimize --output markdown
+uv run mealplan optimize --output json
+uv run mealplan optimize --output markdown
 
 # Show KKT optimality conditions (verify solution is optimal)
-mealplan optimize --verbose
+uv run mealplan optimize --verbose
 ```
 
 ### 4. Add Prices (Optional, for Cost Minimization)
@@ -114,17 +122,17 @@ feasibility mode, all foods in the database are eligible.
 
 ``` bash
 # Search for a food
-mealplan search "chicken breast"
+uv run mealplan search "chicken breast"
 # Found: 171077 - Chicken, broilers or fryers, breast, skinless, boneless...
 
 # Add price (per 100g)
-mealplan prices add 171077 0.80 --source costco
+uv run mealplan prices add 171077 0.80 --source costco
 
 # Or import from CSV
-mealplan prices import my_prices.csv
+uv run mealplan prices import my_prices.csv
 
 # Run with cost minimization
-mealplan optimize --minimize-cost
+uv run mealplan optimize --minimize-cost
 ```
 
 Price CSV format:
@@ -139,7 +147,7 @@ fdc_id,price_per_100g,price_source,notes
 
 ``` bash
 # Export the last optimization as an LLM prompt
-mealplan export-for-llm latest --days 7 --output meal_request.md
+uv run mealplan export-for-llm latest --days 7 --output meal_request.md
 
 # Then paste the contents into Claude to get recipes
 ```
@@ -196,13 +204,13 @@ options:
 Save the profile:
 
 ``` bash
-mealplan profile create cutting --from-file cutting.yaml
+uv run mealplan profile create cutting --from-file cutting.yaml
 ```
 
 **Interactive Wizard**: You can also create profiles interactively:
 
 ``` bash
-mealplan profile wizard
+uv run mealplan profile wizard
 ```
 
 Available nutrient names: `protein`, `carbohydrate`, `total_fat`,
@@ -217,20 +225,20 @@ Tag foods for filtering in optimization:
 
 ``` bash
 # Add tags
-mealplan tags add 171077 protein
-mealplan tags add 171077 meal-prep
+uv run mealplan tags add 171077 protein
+uv run mealplan tags add 171077 meal-prep
 
 # Exclude foods
-mealplan tags add 12345 exclude
+uv run mealplan tags add 12345 exclude
 
 # List foods with a tag
-mealplan tags list --tag protein
+uv run mealplan tags list --tag protein
 ```
 
 **Interactive Tagging**: Quickly search and tag foods by number:
 
 ``` bash
-mealplan tags interactive
+uv run mealplan tags interactive
 ```
 
 Use `exclude_tags` and `include_tags` in profiles to filter foods.
@@ -282,45 +290,45 @@ This ensures optimization only suggests foods you actually buy and cook with.
   ----------------------------------------------------------------------------
   Command                            Description
   ---------------------------------- -----------------------------------------
-  `mealplan init <path>`             Initialize database from USDA CSV
+  `uv run mealplan init <path>`             Initialize database from USDA CSV
                                      directory
 
-  `mealplan search <query>`          Search foods (shows price/tags)
+  `uv run mealplan search <query>`          Search foods (shows price/tags)
 
-  `mealplan info <fdc_id>`           Show nutrients for a food
+  `uv run mealplan info <fdc_id>`           Show nutrients for a food
 
-  `mealplan optimize`                Run optimization
+  `uv run mealplan optimize`                Run optimization
 
-  `mealplan optimize --verbose`      Show KKT optimality conditions
+  `uv run mealplan optimize --verbose`      Show KKT optimality conditions
 
-  `mealplan export-for-llm <id>`     Generate LLM prompt (use `latest` for
+  `uv run mealplan export-for-llm <id>`     Generate LLM prompt (use `latest` for
                                      last run)
 
-  `mealplan history`                 Show past optimization runs
+  `uv run mealplan history`                 Show past optimization runs
 
-  `mealplan prices add`              Add/update a food price
+  `uv run mealplan prices add`              Add/update a food price
 
-  `mealplan prices import`           Import prices from CSV
+  `uv run mealplan prices import`           Import prices from CSV
 
-  `mealplan prices list`             List priced foods
+  `uv run mealplan prices list`             List priced foods
 
-  `mealplan prices list --missing`   List foods without prices
+  `uv run mealplan prices list --missing`   List foods without prices
 
-  `mealplan tags add`                Add tag to food
+  `uv run mealplan tags add`                Add tag to food
 
-  `mealplan tags remove`             Remove tag from food
+  `uv run mealplan tags remove`             Remove tag from food
 
-  `mealplan tags list`               List all tags or foods with tag
+  `uv run mealplan tags list`               List all tags or foods with tag
 
-  `mealplan tags interactive`        Interactive mode to search/tag
+  `uv run mealplan tags interactive`        Interactive mode to search/tag
 
-  `mealplan profile create`          Create profile from YAML
+  `uv run mealplan profile create`          Create profile from YAML
 
-  `mealplan profile wizard`          Interactive profile creator
+  `uv run mealplan profile wizard`          Interactive profile creator
 
-  `mealplan profile list`            List saved profiles
+  `uv run mealplan profile list`            List saved profiles
 
-  `mealplan profile show`            Show profile details
+  `uv run mealplan profile show`            Show profile details
   ----------------------------------------------------------------------------
 
 ## Example Profiles
@@ -338,7 +346,7 @@ Example constraint profiles are provided in `examples/constraints/`:
 Use directly with `--file`:
 
 ``` bash
-mealplan optimize --file examples/constraints/cutting.yaml
+uv run mealplan optimize --file examples/constraints/cutting.yaml
 ```
 
 ## Example Workflow
@@ -350,7 +358,7 @@ mealplan optimize --file examples/constraints/cutting.yaml
 # OR manual setup:
 
 # 1. Initialize database (one time)
-mealplan init ~/Downloads/FoodData_Central_csv/
+uv run mealplan init ~/Downloads/FoodData_Central_csv/
 
 # 2. Tag your staple foods
 ./scripts/tag-staple-foods.sh
@@ -373,10 +381,10 @@ exclude_tags:
 EOF
 
 # 4. Run optimization
-mealplan optimize --file my_diet.yaml
+uv run mealplan optimize --file my_diet.yaml
 
 # 5. Get recipes from Claude
-mealplan export-for-llm latest --days 7 --output ~/Desktop/meal_plan.md
+uv run mealplan export-for-llm latest --days 7 --output ~/Desktop/meal_plan.md
 # Open meal_plan.md and paste into Claude
 ```
 
