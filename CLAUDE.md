@@ -21,6 +21,10 @@ Codex CLI, and other LLM agents for iterative diet planning.
     lists. No prices required.
 -   **Cost minimization mode** (`--minimize-cost`): Minimizes
     `λ₁·cost + λ₂·||x - x̄||²`. Requires foods to have prices set.
+-   **Multi-period mode** (`--multiperiod`): Optimizes per-meal allocations
+    with variables `x_{i,m}` (grams of food i in meal m). Enforces per-meal
+    calorie/nutrient constraints at optimization time, fixing issues like
+    995-calorie snacks from post-hoc allocation.
 
 ## Development Commands
 
@@ -104,8 +108,14 @@ Advanced optimization:
 ``` bash
 uv run mealplan optimize --foods 175167,171287,172421  # Use explicit food IDs
 uv run mealplan optimize --max-foods-in-solution 10    # Limit to N foods (sparse)
-uv run mealplan optimize --allocate-meals --json       # Distribute into meals
+uv run mealplan optimize --allocate-meals --json       # Distribute into meals (post-hoc)
 uv run mealplan optimize-batch pools.json --json       # Run multiple pools at once
+```
+
+Multi-period optimization (per-meal constraints):
+``` bash
+uv run mealplan optimize --multiperiod --json          # Auto-derive meal targets (25/35/35/5%)
+uv run mealplan optimize --file meals.yaml --json      # Use profile with meals: section
 ```
 
 JSON output (add `--json` to any command):
@@ -182,6 +192,15 @@ uv run mealplan info 170567 --json         # Nutrient data as JSON
     -   `batch.py`: `run_batch_optimization()` runs multiple food pools
         in parallel for LLM comparison
     -   `serialization.py`: Request round-trip serialization for whatif analysis
+    -   `multiperiod_models.py`: Data models for multi-period optimization
+        (MealType, MealConfig, MultiPeriodRequest, MealResult)
+    -   `multiperiod_constraints.py`: Builds expanded constraint matrices with
+        variables `x_{i,m}` for per-meal optimization. Handles per-meal calorie/
+        nutrient constraints, daily linking, equi-calorie, food-meal affinity.
+    -   `multiperiod_solver.py`: `solve_multiperiod_diet()` main entry point
+        for multi-period QP optimization
+    -   `multiperiod_diagnosis.py`: IIS-like (Irreducible Infeasible Subset)
+        analysis for identifying conflicting constraints
 
 -   **`data/`**: Data utilities:
     -   `food_categories.py`: Macro-based food classification (protein/fat/carb/
@@ -233,6 +252,52 @@ Example profiles in `examples/constraints/`:
 - `maintenance.yaml` - Balanced (2200-2400 cal, micronutrient focus)
 - `slowcarb_pescatarian.yaml` - Tim Ferriss style + fish only
 
+### Multi-Period Profiles (per-meal constraints)
+
+Add a `meals:` section to enable multi-period optimization:
+
+``` yaml
+calories:
+  min: 1800
+  max: 2000
+
+nutrients:
+  protein:
+    min: 150
+
+meals:
+  breakfast:
+    calories:
+      min: 400
+      max: 550
+    nutrients:
+      protein:
+        min: 30
+  lunch:
+    calories:
+      min: 550
+      max: 700
+  dinner:
+    calories:
+      min: 550
+      max: 700
+  snack:
+    calories:
+      min: 50
+      max: 150
+
+# Optional: require lunch/dinner to be within 100 kcal
+equicalorie:
+  - meals: [lunch, dinner]
+    tolerance: 100
+
+# Optional: restrict foods to specific meals (FDC ID -> allowed meals)
+food_meal_rules:
+  170567: [snack]     # Almonds only in snacks
+```
+
+Profiles with `meals:` are auto-detected and routed to the multi-period solver.
+
 ## Key Design Decisions
 
 -   **Raw sqlite3 over SQLAlchemy**: Simpler, fewer dependencies, direct
@@ -277,8 +342,10 @@ For LLMs that want to explore multiple diet configurations:
 4.  **Limit food count**: `uv run mealplan optimize --max-foods-in-solution 10 --json`
     Get meal-prep friendly solutions with fewer distinct foods
 5.  **Allocate to meals**: `uv run mealplan optimize --allocate-meals --json`
-    Distributes foods into breakfast/lunch/dinner/snack slots
-6.  **Compare runs**: `uv run mealplan explore compare-runs 5 8 --json`
+    Distributes foods into breakfast/lunch/dinner/snack slots (post-hoc heuristic)
+6.  **Multi-period optimization**: `uv run mealplan optimize --multiperiod --json`
+    Enforce per-meal constraints at optimization time (no post-hoc allocation)
+7.  **Compare runs**: `uv run mealplan explore compare-runs 5 8 --json`
     See differences between optimization runs
 
 ### JSON Response Envelope

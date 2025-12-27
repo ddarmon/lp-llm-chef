@@ -312,6 +312,9 @@ def optimize(
     allocate_meals: bool = typer.Option(
         False, "--allocate-meals", help="Distribute foods into meal slots (breakfast/lunch/dinner/snack)"
     ),
+    multiperiod: bool = typer.Option(
+        False, "--multiperiod", "-m", help="Use multi-period solver (auto-detected if profile has 'meals' section)"
+    ),
 ) -> None:
     """Run meal plan optimization."""
     from mealplan.agent.response import create_response
@@ -319,14 +322,21 @@ def optimize(
     from mealplan.explore.diagnosis import diagnose_infeasibility
     from mealplan.optimizer.constraints import (
         deserialize_profile_json,
+        has_meals_section,
+        load_multiperiod_profile_from_yaml,
         load_profile_from_yaml,
     )
     from mealplan.optimizer.models import OptimizationRequest
+    from mealplan.optimizer.multiperiod_solver import solve_multiperiod_diet
     from mealplan.optimizer.solver import solve_diet_problem
 
     db = get_db()
     profile_id: Optional[int] = None
     profile_name: Optional[str] = None
+
+    # Determine if we should use multi-period solver
+    use_multiperiod = multiperiod
+    mp_request = None  # Will be set if using multi-period
 
     # Load constraints
     if profile_file:
@@ -345,7 +355,19 @@ def optimize(
             else:
                 console.print(f"[red]Profile file not found: {profile_file}[/red]")
             raise typer.Exit(1)
-        request = load_profile_from_yaml(profile_file)
+
+        # Auto-detect multi-period from profile
+        if has_meals_section(profile_file):
+            use_multiperiod = True
+            if not json_output:
+                console.print("[dim]Auto-detected multi-period profile (has 'meals' section)[/dim]")
+
+        if use_multiperiod:
+            mp_request = load_multiperiod_profile_from_yaml(profile_file)
+            # Also load single-period for fallback/info
+            request = load_profile_from_yaml(profile_file)
+        else:
+            request = load_profile_from_yaml(profile_file)
         profile_name = profile_file.stem
     elif profile:
         # Load from database
@@ -407,6 +429,129 @@ def optimize(
 
     # Run optimization with verbose output
     with db.get_connection() as conn:
+        # Multi-period optimization path
+        if use_multiperiod and mp_request is not None:
+            # Apply explicit food IDs if provided
+            if foods:
+                try:
+                    food_ids = [int(fid.strip()) for fid in foods.split(",")]
+                    mp_request.explicit_food_ids = food_ids
+                except ValueError:
+                    pass  # Already handled above
+
+            if not json_output:
+                console.print(f"[dim]Running multi-period optimization with {len(mp_request.meals)} meals[/dim]")
+
+            if json_output:
+                mp_result = solve_multiperiod_diet(mp_request, conn, verbose=verbose)
+            else:
+                with console.status("[bold green]Optimizing (multi-period)..."):
+                    mp_result = solve_multiperiod_diet(mp_request, conn, verbose=verbose)
+
+            # Format multi-period output
+            if json_output:
+                response_data = {
+                    "run_id": None,  # TODO: save multi-period runs
+                    "status": mp_result.status,
+                    "profile": profile_name,
+                    "multiperiod": True,
+                }
+
+                if mp_result.success:
+                    response_data["meals"] = {
+                        meal.meal_type.value: {
+                            "foods": [
+                                {
+                                    "fdc_id": f.fdc_id,
+                                    "description": f.description,
+                                    "grams": float(round(f.grams, 1)),
+                                    "calories": float(round(f.nutrients.get(1008, 0), 0)),
+                                }
+                                for f in meal.foods
+                            ],
+                            "totals": {
+                                "calories": float(round(meal.total_calories, 0)),
+                                "protein": float(round(meal.total_protein, 1)),
+                                "carbs": float(round(meal.total_carbs, 1)),
+                                "fat": float(round(meal.total_fat, 1)),
+                            },
+                        }
+                        for meal in mp_result.meals
+                    }
+                    response_data["daily_totals"] = {
+                        k: float(round(v, 1)) for k, v in mp_result.daily_totals.items()
+                    }
+                    response_data["human_summary"] = (
+                        f"{len(mp_result.meals)} meals: "
+                        f"{mp_result.daily_totals['calories']:.0f} kcal, "
+                        f"{mp_result.daily_totals['protein']:.0f}g protein"
+                    )
+                else:
+                    response_data["errors"] = [mp_result.message]
+                    if mp_result.infeasibility_diagnosis:
+                        response_data["diagnosis"] = {
+                            "conflicting_constraints": mp_result.infeasibility_diagnosis.conflicting_constraints,
+                            "suggested_relaxations": mp_result.infeasibility_diagnosis.suggested_relaxations,
+                        }
+                    response_data["human_summary"] = f"Failed: {mp_result.message}"
+
+                output_json(create_response(
+                    success=mp_result.success,
+                    command="optimize",
+                    data=response_data,
+                    errors=[mp_result.message] if not mp_result.success else [],
+                    suggestions=mp_result.infeasibility_diagnosis.suggested_relaxations if mp_result.infeasibility_diagnosis else [],
+                    human_summary=response_data.get("human_summary", ""),
+                ).to_dict())
+            else:
+                # Console output for multi-period
+                from rich.panel import Panel
+                from rich.table import Table
+
+                if mp_result.success:
+                    console.print(Panel(
+                        f"[bold green]Multi-Period Optimization Successful[/bold green]\n"
+                        f"Profile: {profile_name or 'default'}\n"
+                        f"Meals: {len(mp_result.meals)}",
+                        title="Result"
+                    ))
+
+                    for meal in mp_result.meals:
+                        table = Table(title=f"{meal.meal_type.value.title()} ({meal.total_calories:.0f} kcal)")
+                        table.add_column("Food", style="cyan")
+                        table.add_column("Grams", justify="right")
+
+                        for food in meal.foods:
+                            from mealplan.export.llm_prompt import clean_food_name
+                            table.add_row(clean_food_name(food.description), f"{food.grams:.0f}g")
+
+                        console.print(table)
+                        console.print(
+                            f"[dim]P: {meal.total_protein:.0f}g | "
+                            f"C: {meal.total_carbs:.0f}g | "
+                            f"F: {meal.total_fat:.0f}g[/dim]\n"
+                        )
+
+                    console.print(Panel(
+                        f"Calories: {mp_result.daily_totals['calories']:.0f}\n"
+                        f"Protein: {mp_result.daily_totals['protein']:.0f}g\n"
+                        f"Carbs: {mp_result.daily_totals['carbs']:.0f}g\n"
+                        f"Fat: {mp_result.daily_totals['fat']:.0f}g",
+                        title="Daily Totals"
+                    ))
+                else:
+                    console.print(f"[red]Optimization failed: {mp_result.message}[/red]")
+                    if mp_result.infeasibility_diagnosis:
+                        console.print("\n[yellow]Conflicting constraints:[/yellow]")
+                        for c in mp_result.infeasibility_diagnosis.conflicting_constraints[:5]:
+                            console.print(f"  - {c}")
+                        console.print("\n[yellow]Suggestions:[/yellow]")
+                        for s in mp_result.infeasibility_diagnosis.suggested_relaxations[:5]:
+                            console.print(f"  - {s}")
+
+            return  # Exit after multi-period handling
+
+        # Standard single-period path
         # Build constraints first to get food count info
         from mealplan.optimizer.constraints import ConstraintBuilder
 
