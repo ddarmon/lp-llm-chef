@@ -34,6 +34,9 @@ from natural language goals.
     pool suggestions, limit food count for meal-prep
 -   **Meal allocation**: Distribute foods into breakfast/lunch/dinner/snack
     slots using heuristics
+-   **Multi-period optimization**: Per-meal calorie/nutrient constraints
+    enforced at optimization time (not post-hoc). Includes equi-calorie
+    constraints and food-meal affinity rules.
 -   **Food categories**: Classify foods by macro dominance (protein, carb,
     fat, vegetable, legume)
 
@@ -305,6 +308,8 @@ This ensures optimization only suggests foods you actually buy and cook with.
 
   `uv run mealplan optimize`                Run optimization
 
+  `uv run mealplan optimize --multiperiod`  Multi-period mode (per-meal constraints)
+
   `uv run mealplan optimize --verbose`      Show KKT optimality conditions
 
   `uv run mealplan export-for-llm <id>`     Generate LLM prompt (use `latest` for
@@ -357,7 +362,7 @@ uv run mealplan optimize-batch pools.json --json
 uv run mealplan optimize --max-foods-in-solution 10 --json
 ```
 
-### Meal Allocation
+### Meal Allocation (Post-hoc)
 
 ``` bash
 # Distribute foods into breakfast/lunch/dinner/snack
@@ -366,6 +371,46 @@ uv run mealplan optimize --allocate-meals --json
 
 This uses keyword heuristics (eggs→breakfast, fish→lunch/dinner, nuts→snack)
 to distribute the optimization result into meal slots.
+
+### Multi-Period Optimization (Per-Meal Constraints)
+
+For proper per-meal constraints enforced at optimization time:
+
+``` bash
+# Auto-derive meal targets (25% breakfast, 35% lunch, 35% dinner, 5% snack)
+uv run mealplan optimize --multiperiod --json
+
+# Use a profile with meals: section
+uv run mealplan optimize --file meals_profile.yaml --json
+```
+
+Multi-period profiles define per-meal constraints:
+
+``` yaml
+calories:
+  min: 1800
+  max: 2000
+
+meals:
+  breakfast:
+    calories: {min: 400, max: 550}
+    nutrients:
+      protein: {min: 30}
+  lunch:
+    calories: {min: 550, max: 700}
+  dinner:
+    calories: {min: 550, max: 700}
+  snack:
+    calories: {min: 50, max: 150}  # No more 995-calorie snacks!
+
+# Optional: balance lunch and dinner
+equicalorie:
+  - meals: [lunch, dinner]
+    tolerance: 100
+```
+
+This prevents issues like the optimizer putting all nuts into a single
+995-calorie "snack" by enforcing constraints at optimization time.
 
 ### Run Comparison
 
@@ -471,6 +516,20 @@ results. No prices required.
 Finds the cheapest diet meeting constraints, with a small diversity
 penalty to avoid extreme solutions (e.g., eating 2kg of one cheap food).
 Requires prices to be set for foods.
+
+### Multi-Period Mode (`--multiperiod`)
+
+**Variables**: x_{i,m} = grams of food i in meal m
+
+**Additional constraints**:
+- Per-meal calorie bounds (e.g., snack ≤ 150 kcal)
+- Per-meal nutrient bounds (e.g., breakfast protein ≥ 30g)
+- Daily linking (sum of meal allocations meets daily targets)
+- Equi-calorie constraints (|lunch - dinner| ≤ 100 kcal)
+- Food-meal affinity (almonds only in snacks)
+
+This enforces meal structure at optimization time, avoiding post-hoc
+allocation issues.
 
 ## Configuration
 

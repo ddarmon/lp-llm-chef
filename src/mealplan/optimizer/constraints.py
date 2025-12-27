@@ -469,3 +469,224 @@ def deserialize_profile_json(data: dict) -> OptimizationRequest:
         request.max_foods = int(options["max_foods"])
 
     return request
+
+
+def has_meals_section(yaml_path: Path) -> bool:
+    """Check if a YAML profile contains a meals section (multi-period).
+
+    Args:
+        yaml_path: Path to the YAML profile file
+
+    Returns:
+        True if profile has a 'meals' dict section
+    """
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f)
+    return "meals" in data and isinstance(data.get("meals"), dict)
+
+
+def load_multiperiod_profile_from_yaml(yaml_path: Path):
+    """Parse a YAML profile with meals section into MultiPeriodRequest.
+
+    Example YAML format:
+        calories:
+          min: 1800
+          max: 2000
+
+        nutrients:
+          protein: {min: 150}
+
+        meals:
+          breakfast:
+            calories: {min: 400, max: 550}
+            nutrients:
+              protein: {min: 25}
+          snack:
+            calories: {min: 0, max: 200}
+
+        equicalorie:
+          meals: [lunch, dinner]
+          tolerance: 100
+
+        food_meal_rules:
+          170567: [snack]  # Explicit FDC ID -> allowed meals
+
+        options:
+          max_grams_per_food_per_meal: 300
+
+    Args:
+        yaml_path: Path to the YAML profile file
+
+    Returns:
+        MultiPeriodRequest configured from the YAML
+
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        KeyError: If nutrient name is unknown
+    """
+    from mealplan.optimizer.multiperiod_models import (
+        EquiCalorieConstraint,
+        FoodMealAffinity,
+        MealCalorieTarget,
+        MealConfig,
+        MealNutrientConstraint,
+        MealType,
+        MultiPeriodRequest,
+        derive_default_meal_configs,
+    )
+
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f)
+
+    # Parse daily calorie range
+    daily_cal_range = (
+        float(data.get("calories", {}).get("min", 0)),
+        float(data.get("calories", {}).get("max", 10000)),
+    )
+
+    # Parse daily nutrient constraints
+    daily_nutrients = []
+    for nutrient_name, bounds in data.get("nutrients", {}).items():
+        nutrient_id = get_nutrient_id(nutrient_name)
+        min_val = bounds.get("min")
+        max_val = bounds.get("max")
+        if min_val is not None:
+            min_val = float(min_val)
+        if max_val is not None:
+            max_val = float(max_val)
+        daily_nutrients.append(
+            NutrientConstraint(
+                nutrient_id=nutrient_id,
+                min_value=min_val,
+                max_value=max_val,
+            )
+        )
+
+    # Parse meals section
+    meal_configs = []
+    meals_data = data.get("meals", {})
+
+    for meal_name, meal_spec in meals_data.items():
+        try:
+            meal_type = MealType(meal_name.lower())
+        except ValueError:
+            # Skip unknown meal types
+            continue
+
+        # Per-meal calories
+        cal_target = None
+        if "calories" in meal_spec:
+            cal_spec = meal_spec["calories"]
+            cal_target = MealCalorieTarget(
+                meal=meal_type,
+                min_calories=float(cal_spec.get("min", 0)),
+                max_calories=float(cal_spec.get("max", float("inf"))),
+            )
+
+        # Per-meal nutrients
+        meal_nutrients = []
+        for nutrient_name, bounds in meal_spec.get("nutrients", {}).items():
+            nutrient_id = get_nutrient_id(nutrient_name)
+            min_val = bounds.get("min")
+            max_val = bounds.get("max")
+            if min_val is not None:
+                min_val = float(min_val)
+            if max_val is not None:
+                max_val = float(max_val)
+            meal_nutrients.append(
+                MealNutrientConstraint(
+                    meal=meal_type,
+                    nutrient_id=nutrient_id,
+                    min_value=min_val,
+                    max_value=max_val,
+                )
+            )
+
+        # Typical portion for this meal type
+        typical = 100.0
+        if meal_type == MealType.SNACK:
+            typical = 30.0
+        typical = float(meal_spec.get("typical_portion", typical))
+
+        meal_configs.append(
+            MealConfig(
+                meal_type=meal_type,
+                calorie_target=cal_target,
+                nutrient_constraints=meal_nutrients,
+                typical_portion=typical,
+            )
+        )
+
+    # If no meals specified, derive defaults from daily constraints
+    if not meal_configs:
+        meal_configs = derive_default_meal_configs(daily_cal_range, daily_nutrients)
+
+    # Parse equicalorie constraints
+    # Supports both list format (from TRY_ME.md) and dict format
+    equicalorie_constraints = []
+    if "equicalorie" in data:
+        eq_data = data["equicalorie"]
+        # Handle list format: equicalorie: [{ meals: [...], tolerance: 100 }]
+        if isinstance(eq_data, list):
+            for eq_item in eq_data:
+                eq_meals = eq_item.get("meals", [])
+                if len(eq_meals) == 2:
+                    try:
+                        equicalorie_constraints.append(
+                            EquiCalorieConstraint(
+                                meal_a=MealType(eq_meals[0].lower()),
+                                meal_b=MealType(eq_meals[1].lower()),
+                                tolerance=float(eq_item.get("tolerance", 100)),
+                            )
+                        )
+                    except ValueError:
+                        pass  # Skip invalid meal types
+        # Handle dict format: equicalorie: { meals: [...], tolerance: 100 }
+        else:
+            eq_meals = eq_data.get("meals", [])
+            if len(eq_meals) == 2:
+                try:
+                    equicalorie_constraints.append(
+                        EquiCalorieConstraint(
+                            meal_a=MealType(eq_meals[0].lower()),
+                            meal_b=MealType(eq_meals[1].lower()),
+                            tolerance=float(eq_data.get("tolerance", 100)),
+                        )
+                    )
+                except ValueError:
+                    pass  # Skip invalid meal types
+
+    # Parse food-meal affinities (explicit FDC IDs only)
+    food_meal_affinities = []
+    for fdc_id_str, allowed_meals in data.get("food_meal_rules", {}).items():
+        try:
+            fdc_id = int(fdc_id_str)
+            meal_types = [MealType(m.lower()) for m in allowed_meals]
+            food_meal_affinities.append(
+                FoodMealAffinity(fdc_id=fdc_id, allowed_meals=meal_types)
+            )
+        except (ValueError, KeyError):
+            pass  # Skip invalid entries
+
+    # Parse options
+    options = data.get("options", {})
+
+    return MultiPeriodRequest(
+        daily_calorie_range=daily_cal_range,
+        daily_nutrient_constraints=daily_nutrients,
+        meals=meal_configs,
+        equicalorie_constraints=equicalorie_constraints,
+        food_meal_affinities=food_meal_affinities,
+        mode=str(options.get("mode", "feasibility")),
+        exclude_tags=data.get("exclude_tags", []),
+        include_tags=data.get("include_tags", []),
+        max_grams_per_food_per_meal=float(
+            options.get("max_grams_per_food_per_meal", 300)
+        ),
+        max_grams_per_food_daily=float(
+            options.get("max_grams_per_food_daily", 500)
+        ),
+        max_foods=int(options.get("max_foods", 300)),
+        lambda_cost=float(options.get("lambda_cost", 1.0)),
+        lambda_deviation=float(options.get("lambda_deviation", 0.001)),
+    )
