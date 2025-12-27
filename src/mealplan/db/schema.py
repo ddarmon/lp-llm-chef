@@ -79,14 +79,14 @@ CREATE TABLE IF NOT EXISTS constraint_profiles (
 CREATE TABLE IF NOT EXISTS optimization_runs (
     run_id INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_id INTEGER,
-    run_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status TEXT,
     total_cost REAL,
     result_json TEXT,
     FOREIGN KEY (profile_id) REFERENCES constraint_profiles(profile_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_optimization_runs_date ON optimization_runs(run_date);
+CREATE INDEX IF NOT EXISTS idx_optimization_runs_date ON optimization_runs(created_at);
 """
 
 

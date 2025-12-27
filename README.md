@@ -30,6 +30,12 @@ from natural language goals.
 -   **What-if analysis**: Iterate on solutions by modifying constraints
 -   **Infeasibility diagnosis**: When optimization fails, explains why
     and suggests fixes
+-   **Meta-optimization**: Batch optimize multiple food pools, generate
+    pool suggestions, limit food count for meal-prep
+-   **Meal allocation**: Distribute foods into breakfast/lunch/dinner/snack
+    slots using heuristics
+-   **Food categories**: Classify foods by macro dominance (protein, carb,
+    fat, vegetable, legume)
 
 ## Installation
 
@@ -330,6 +336,57 @@ This ensures optimization only suggests foods you actually buy and cook with.
 
   `uv run mealplan profile show`            Show profile details
   ----------------------------------------------------------------------------
+
+## Advanced LLM Features
+
+These features are designed for LLM agents doing iterative diet optimization:
+
+### Meta-Optimization
+
+``` bash
+# Generate food pool suggestions (balanced, high-protein, budget)
+uv run mealplan explore suggest-pools --json
+
+# Optimize with explicit food IDs (bypass tag filtering)
+uv run mealplan optimize --foods 175167,171287,172421 --json
+
+# Batch optimize multiple food pools at once
+uv run mealplan optimize-batch pools.json --json
+
+# Limit solution to N foods (meal-prep friendly)
+uv run mealplan optimize --max-foods-in-solution 10 --json
+```
+
+### Meal Allocation
+
+``` bash
+# Distribute foods into breakfast/lunch/dinner/snack
+uv run mealplan optimize --allocate-meals --json
+```
+
+This uses keyword heuristics (eggs→breakfast, fish→lunch/dinner, nuts→snack)
+to distribute the optimization result into meal slots.
+
+### Run Comparison
+
+``` bash
+# List recent optimization runs
+uv run mealplan explore runs
+
+# Compare two runs side-by-side
+uv run mealplan explore compare-runs 5 8 --json
+```
+
+### Food Categories
+
+Filter foods by macro-based category:
+
+``` bash
+# Find high-protein foods
+uv run mealplan explore foods "chicken" --category protein --json
+
+# Categories: protein, fat, carb, vegetable, legume, fruit, mixed
+```
 
 ## Example Profiles
 
