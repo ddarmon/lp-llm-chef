@@ -286,6 +286,9 @@ def optimize(
     profile_file: Optional[Path] = typer.Option(
         None, "--file", "-f", help="YAML constraint file"
     ),
+    foods: Optional[str] = typer.Option(
+        None, "--foods", help="Comma-separated FDC IDs to include (bypasses tag filtering)"
+    ),
     days: int = typer.Option(1, "--days", "-d", help="Number of days to plan"),
     output: str = typer.Option(
         "table", "--output", "-o", help="Output format: table, json, markdown"
@@ -297,11 +300,17 @@ def optimize(
     max_foods: int = typer.Option(
         300, "--max-foods", help="Maximum foods to consider (randomly sampled if exceeded)"
     ),
+    max_foods_in_solution: Optional[int] = typer.Option(
+        None, "--max-foods-in-solution", help="Limit distinct foods in solution (uses two-phase solver)"
+    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Display KKT optimality conditions"
     ),
     json_output: bool = typer.Option(
         False, "--json", help="Output as JSON with agent-friendly envelope"
+    ),
+    allocate_meals: bool = typer.Option(
+        False, "--allocate-meals", help="Distribute foods into meal slots (breakfast/lunch/dinner/snack)"
     ),
 ) -> None:
     """Run meal plan optimization."""
@@ -376,6 +385,26 @@ def optimize(
     if minimize_cost:
         request.mode = "minimize_cost"
 
+    # Parse explicit food IDs if provided
+    if foods:
+        try:
+            food_ids = [int(fid.strip()) for fid in foods.split(",")]
+            request.explicit_food_ids = food_ids
+            if not json_output:
+                console.print(f"[dim]Using explicit food pool: {len(food_ids)} foods[/dim]")
+        except ValueError:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "optimize",
+                    "errors": [f"Invalid --foods format: {foods}"],
+                    "suggestions": ["Use comma-separated numeric FDC IDs, e.g., --foods 175167,171287,172421"],
+                })
+            else:
+                console.print(f"[red]Invalid --foods format: {foods}[/red]")
+                console.print("[red]Use comma-separated numeric FDC IDs, e.g., --foods 175167,171287,172421[/red]")
+            raise typer.Exit(1)
+
     # Run optimization with verbose output
     with db.get_connection() as conn:
         # Build constraints first to get food count info
@@ -386,6 +415,9 @@ def optimize(
 
         total_foods = constraint_data["total_eligible_foods"]
         used_foods = len(constraint_data["food_ids"])
+
+        # Get data quality warnings
+        data_quality_warnings = constraint_data.get("data_quality_warnings", [])
 
         if not json_output:
             if constraint_data["was_sampled"]:
@@ -405,11 +437,29 @@ def optimize(
                     "[yellow]Use 'mealplan tags add <fdc_id> <tag>' to tag foods first.[/yellow]"
                 )
 
-        if json_output:
-            result = solve_diet_problem(request, conn, verbose=verbose)
+            # Display data quality warnings
+            if data_quality_warnings:
+                console.print(f"[yellow]Data quality warnings ({len(data_quality_warnings)} foods):[/yellow]")
+                for warning in data_quality_warnings[:5]:  # Limit to 5 for console
+                    console.print(f"[yellow]  - {warning}[/yellow]")
+                if len(data_quality_warnings) > 5:
+                    console.print(f"[yellow]  ... and {len(data_quality_warnings) - 5} more[/yellow]")
+
+        # Run optimization - use sparse solver if max_foods_in_solution is set
+        if max_foods_in_solution is not None:
+            from mealplan.optimizer.sparse_solver import solve_sparse_diet
+
+            if json_output:
+                result = solve_sparse_diet(request, conn, max_foods_in_solution, verbose=verbose)
+            else:
+                with console.status(f"[bold green]Optimizing (max {max_foods_in_solution} foods)..."):
+                    result = solve_sparse_diet(request, conn, max_foods_in_solution, verbose=verbose)
         else:
-            with console.status("[bold green]Optimizing..."):
+            if json_output:
                 result = solve_diet_problem(request, conn, verbose=verbose)
+            else:
+                with console.status("[bold green]Optimizing..."):
+                    result = solve_diet_problem(request, conn, verbose=verbose)
 
         # If failed, run diagnosis
         diagnosis = None
@@ -422,7 +472,13 @@ def optimize(
         from mealplan.export.formatters import JSONFormatter
 
         formatter = JSONFormatter()
-        result_json = formatter.format(result, profile_name)
+        # Include request for constraints_used to enable what-if round-trip
+        result_json = formatter.format(
+            result,
+            profile_name,
+            request=request,
+            data_quality_warnings=data_quality_warnings,
+        )
         with db.get_connection() as conn:
             run_id = OptimizationRunQueries.save_run(
                 conn,
@@ -470,6 +526,15 @@ def optimize(
                 "total_cost": round(result.total_cost, 2) if result.total_cost else None,
             }
 
+            # Add meal allocation if requested
+            if allocate_meals:
+                from mealplan.export.meal_allocator import allocate_to_meals, format_meal_allocation
+
+                total_calories = sum(n.amount for n in result.nutrients if n.nutrient_id == 1008)
+                if total_calories > 0:
+                    meals = allocate_to_meals(result.foods, total_calories)
+                    response_data["meal_allocation"] = format_meal_allocation(meals)
+
             # Add binding constraints info
             if result.kkt_analysis:
                 binding = [
@@ -496,7 +561,7 @@ def optimize(
 
         # Add suggestions
         suggestions = []
-        warnings = []
+        warnings = list(data_quality_warnings)  # Include data quality warnings
 
         if result.success:
             # Check for binding constraints
@@ -560,6 +625,16 @@ def optimize(
         kkt_formatter = KKTFormatter(console)
         kkt_formatter.format(result.kkt_analysis)
 
+    # Display meal allocation if requested
+    if allocate_meals and result.success and result.foods:
+        from mealplan.export.meal_allocator import allocate_to_meals, format_meal_allocation_text
+
+        total_calories = sum(n.amount for n in result.nutrients if n.nutrient_id == 1008)
+        if total_calories > 0:
+            console.print()
+            meals = allocate_to_meals(result.foods, total_calories)
+            console.print(format_meal_allocation_text(meals))
+
     # Show diagnosis if failed
     if not result.success and diagnosis:
         console.print()
@@ -579,6 +654,136 @@ def optimize(
 
         for s in diagnosis.get("suggestions", []):
             console.print(f"\n[cyan]Suggestion:[/cyan] {s.get('detail', s.get('action', ''))}")
+
+
+@app.command("optimize-batch")
+def optimize_batch_cmd(
+    pools_file: Path = typer.Argument(..., help="JSON file with batch pools and constraints"),
+    json_output: bool = typer.Option(True, "--json/--no-json", help="Output as JSON"),
+) -> None:
+    """Run batch optimization across multiple food pools.
+
+    Input JSON format:
+    {
+        "base_constraints": {
+            "calories": [1700, 1900],
+            "nutrients": {"protein": {"min": 150}, "fiber": {"min": 30}}
+        },
+        "pools": [
+            {"name": "pool_a", "foods": [175167, 171287, 172421]},
+            {"name": "pool_b", "foods": [171955, 175139, 173757]}
+        ]
+    }
+    """
+    import json as json_module
+
+    from mealplan.optimizer.batch import (
+        compare_batch_results,
+        format_batch_response,
+        parse_batch_request_json,
+        run_batch_optimization,
+    )
+
+    if not pools_file.exists():
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "optimize-batch",
+                "errors": [f"Pools file not found: {pools_file}"],
+                "suggestions": ["Check the file path"],
+            })
+        else:
+            console.print(f"[red]Pools file not found: {pools_file}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        with open(pools_file) as f:
+            data = json_module.load(f)
+    except json_module.JSONDecodeError as e:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "optimize-batch",
+                "errors": [f"Invalid JSON in pools file: {e}"],
+                "suggestions": ["Validate the JSON format"],
+            })
+        else:
+            console.print(f"[red]Invalid JSON in pools file: {e}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        batch_request = parse_batch_request_json(data)
+    except Exception as e:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "optimize-batch",
+                "errors": [f"Failed to parse batch request: {e}"],
+                "suggestions": ["Check the JSON format matches the expected schema"],
+            })
+        else:
+            console.print(f"[red]Failed to parse batch request: {e}[/red]")
+        raise typer.Exit(1)
+
+    if not batch_request.pools:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "optimize-batch",
+                "errors": ["No pools specified in batch request"],
+                "suggestions": ["Add at least one pool with food IDs"],
+            })
+        else:
+            console.print("[red]No pools specified in batch request[/red]")
+        raise typer.Exit(1)
+
+    db = get_db()
+    with db.get_connection() as conn:
+        if not json_output:
+            console.print(f"[dim]Running batch optimization across {len(batch_request.pools)} pools...[/dim]")
+
+        results = run_batch_optimization(conn, batch_request, save_runs=False)
+        comparison = compare_batch_results(results)
+
+    if json_output:
+        response_data = format_batch_response(results, comparison)
+        successful = sum(1 for r in results if r.success)
+
+        output_json({
+            "success": successful > 0,
+            "command": "optimize-batch",
+            "data": response_data,
+            "warnings": [],
+            "suggestions": [],
+            "human_summary": f"{successful}/{len(results)} pools feasible. Best: {comparison.get('best', 'none')}",
+        })
+    else:
+        # Table output
+        table = Table(title="Batch Optimization Results")
+        table.add_column("Pool", style="cyan")
+        table.add_column("Status")
+        table.add_column("Calories", justify="right")
+        table.add_column("Protein", justify="right")
+        table.add_column("Cost", justify="right", style="green")
+        table.add_column("Foods", justify="right")
+
+        for r in results:
+            if r.success and r.summary:
+                status = "[green]optimal[/green]"
+                calories = f"{r.summary.get('total_calories', 0):.0f}"
+                protein = f"{r.summary.get('total_protein', 0):.1f}g"
+                cost = f"${r.summary.get('total_cost', 0):.2f}" if r.summary.get('total_cost') else "-"
+                foods = str(r.summary.get('food_count', 0))
+            else:
+                status = f"[red]{r.status}[/red]"
+                calories = protein = cost = foods = "-"
+
+            table.add_row(r.pool_name, status, calories, protein, cost, foods)
+
+        console.print(table)
+
+        if comparison.get("best"):
+            console.print(f"\n[green]Best pool: {comparison['best']}[/green]")
 
 
 @app.command("export-for-llm")
@@ -801,6 +1006,9 @@ def explore_foods_cmd(
     max_cost: Optional[float] = typer.Option(None, "--max-cost", help="Max cost per 100g"),
     has_tag: Optional[str] = typer.Option(None, "--tag", help="Filter to foods with this tag"),
     has_price: Optional[bool] = typer.Option(None, "--has-price/--no-price", help="Filter by price availability"),
+    category: Optional[str] = typer.Option(
+        None, "--category", help="Filter by food category (protein, fat, carb, legume, vegetable, fruit, mixed)"
+    ),
     limit: int = typer.Option(20, "--limit", "-n", help="Maximum results"),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
@@ -817,6 +1025,7 @@ def explore_foods_cmd(
         max_cost=max_cost,
         has_tag=has_tag,
         has_price=has_price,
+        category=category,
         limit=limit,
     )
 
@@ -1103,6 +1312,254 @@ def explore_whatif(
     else:
         console.print(f"[red]Status: {res['status']}[/red]")
         console.print(f"[red]{res['message']}[/red]")
+
+
+@explore_app.command("suggest-pools")
+def explore_suggest_pools(
+    strategies: Optional[str] = typer.Option(
+        None, "--strategies", "-s", help="Comma-separated strategies: balanced,high_protein,budget"
+    ),
+    target_size: int = typer.Option(30, "--size", help="Target number of foods per pool"),
+    tag: Optional[str] = typer.Option(None, "--tag", "-t", help="Filter to foods with this tag"),
+    require_price: bool = typer.Option(False, "--require-price", help="Only include foods with prices"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Suggest food pools for optimization using different strategies.
+
+    Strategies:
+    - balanced: Proportional selection across macro categories
+    - high_protein: Foods with >= 20g protein per 100g
+    - budget: Foods with price <= $1/100g
+
+    Examples:
+        mealplan explore suggest-pools --json
+        mealplan explore suggest-pools --strategies balanced,high_protein --tag staple
+    """
+    from mealplan.explore.suggest import format_pool_suggestions, suggest_pools
+
+    db = get_db()
+
+    # Parse strategies
+    strategy_list = None
+    if strategies:
+        strategy_list = [s.strip() for s in strategies.split(",")]
+
+    with db.get_connection() as conn:
+        suggestions = suggest_pools(
+            conn,
+            strategies=strategy_list,
+            target_size=target_size,
+            tag=tag,
+            require_price=require_price,
+        )
+
+    if json_output:
+        response = format_pool_suggestions(suggestions)
+        output_json({
+            "success": True,
+            "command": "explore suggest-pools",
+            "data": response,
+            "human_summary": f"Generated {len(suggestions)} pool suggestions",
+        })
+        return
+
+    if not suggestions:
+        console.print("[yellow]No pool suggestions generated. Check your filters.[/yellow]")
+        return
+
+    for suggestion in suggestions:
+        console.print(Panel(
+            f"[bold]{suggestion.name}[/bold]\n\n"
+            f"Strategy: {suggestion.strategy}\n"
+            f"Foods: {len(suggestion.food_ids)}\n"
+            f"{suggestion.description}",
+            title=f"Pool: {suggestion.name}",
+        ))
+
+        # Show food IDs in a format easy to copy for --foods flag
+        if suggestion.food_ids:
+            ids_str = ",".join(str(fid) for fid in suggestion.food_ids[:10])
+            if len(suggestion.food_ids) > 10:
+                ids_str += f"... (+{len(suggestion.food_ids) - 10} more)"
+            console.print(f"[dim]IDs: {ids_str}[/dim]")
+        console.print()
+
+
+@explore_app.command("runs")
+def explore_runs(
+    limit: int = typer.Option(10, "--limit", "-n", help="Maximum runs to show"),
+    profile_filter: Optional[str] = typer.Option(None, "--profile", "-p", help="Filter by profile name"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """List recent optimization runs.
+
+    Examples:
+        mealplan explore runs
+        mealplan explore runs --limit 5 --profile cutting
+    """
+    from mealplan.explore.compare import format_run_list, list_runs
+
+    db = get_db()
+
+    with db.get_connection() as conn:
+        runs = list_runs(conn, limit=limit, profile=profile_filter)
+
+    if json_output:
+        response = format_run_list(runs)
+        output_json({
+            "success": True,
+            "command": "explore runs",
+            "data": response,
+            "human_summary": f"Listed {len(runs)} optimization runs",
+        })
+        return
+
+    if not runs:
+        console.print("[yellow]No optimization runs found.[/yellow]")
+        return
+
+    table = Table(title="Recent Optimization Runs")
+    table.add_column("ID", style="cyan")
+    table.add_column("Timestamp")
+    table.add_column("Status")
+    table.add_column("Profile")
+    table.add_column("Foods", justify="right")
+    table.add_column("Calories", justify="right")
+    table.add_column("Protein", justify="right")
+    table.add_column("Cost", justify="right")
+
+    for run in runs:
+        status_color = "green" if run.success else "red"
+        cost_str = f"${run.total_cost:.2f}" if run.total_cost else "-"
+        table.add_row(
+            str(run.run_id),
+            run.timestamp[:16],  # Truncate for display
+            f"[{status_color}]{run.status}[/{status_color}]",
+            run.profile or "-",
+            str(run.food_count),
+            f"{run.calories:.0f}",
+            f"{run.protein:.1f}g",
+            cost_str,
+        )
+
+    console.print(table)
+
+
+@explore_app.command("compare-runs")
+def explore_compare_runs(
+    run_a: int = typer.Argument(..., help="First run ID"),
+    run_b: int = typer.Argument(..., help="Second run ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Compare two optimization runs.
+
+    Shows differences in cost, nutrients, and food selections between runs.
+
+    Examples:
+        mealplan explore compare-runs 5 8
+        mealplan explore compare-runs 5 8 --json
+    """
+    from mealplan.explore.compare import compare_runs, format_run_comparison
+
+    db = get_db()
+
+    with db.get_connection() as conn:
+        comparison = compare_runs(conn, run_a, run_b)
+
+    if comparison is None:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "explore compare-runs",
+                "errors": [f"Could not find run {run_a} or {run_b}"],
+            })
+        else:
+            console.print(f"[red]Could not find run {run_a} or {run_b}[/red]")
+        raise typer.Exit(1)
+
+    if json_output:
+        response = format_run_comparison(comparison)
+        output_json({
+            "success": True,
+            "command": "explore compare-runs",
+            "data": response,
+            "human_summary": f"Compared run {run_a} vs {run_b}",
+        })
+        return
+
+    # Display comparison
+    console.print(Panel(f"[bold]Run Comparison: #{run_a} vs #{run_b}[/bold]"))
+
+    # Summary table
+    table = Table(title="Summary")
+    table.add_column("Metric")
+    table.add_column(f"Run {run_a}", justify="right")
+    table.add_column(f"Run {run_b}", justify="right")
+    table.add_column("Difference", justify="right")
+
+    # Calories
+    cal_diff = comparison.calorie_difference
+    cal_color = "green" if abs(cal_diff) < 100 else ("yellow" if abs(cal_diff) < 200 else "red")
+    cal_sign = "+" if cal_diff > 0 else ""
+    table.add_row(
+        "Calories",
+        f"{comparison.run_a.calories:.0f}",
+        f"{comparison.run_b.calories:.0f}",
+        f"[{cal_color}]{cal_sign}{cal_diff:.0f}[/{cal_color}]",
+    )
+
+    # Protein
+    prot_diff = comparison.protein_difference
+    prot_sign = "+" if prot_diff > 0 else ""
+    table.add_row(
+        "Protein",
+        f"{comparison.run_a.protein:.1f}g",
+        f"{comparison.run_b.protein:.1f}g",
+        f"{prot_sign}{prot_diff:.1f}g",
+    )
+
+    # Cost
+    if comparison.cost_difference is not None:
+        cost_diff = comparison.cost_difference
+        cost_sign = "+" if cost_diff > 0 else ""
+        cost_color = "red" if cost_diff > 0 else "green"
+        table.add_row(
+            "Cost",
+            f"${comparison.run_a.total_cost:.2f}",
+            f"${comparison.run_b.total_cost:.2f}",
+            f"[{cost_color}]{cost_sign}${cost_diff:.2f}[/{cost_color}]",
+        )
+    else:
+        table.add_row("Cost", "-", "-", "-")
+
+    # Food count
+    food_diff = comparison.run_b.food_count - comparison.run_a.food_count
+    food_sign = "+" if food_diff > 0 else ""
+    table.add_row(
+        "Foods",
+        str(comparison.run_a.food_count),
+        str(comparison.run_b.food_count),
+        f"{food_sign}{food_diff}",
+    )
+
+    console.print(table)
+
+    # Food differences
+    if comparison.foods_only_in_a:
+        console.print(f"\n[red]Foods only in run {run_a}:[/red]")
+        for f in comparison.foods_only_in_a[:5]:
+            console.print(f"  - {f[:50]}")
+        if len(comparison.foods_only_in_a) > 5:
+            console.print(f"  ... and {len(comparison.foods_only_in_a) - 5} more")
+
+    if comparison.foods_only_in_b:
+        console.print(f"\n[green]Foods only in run {run_b}:[/green]")
+        for f in comparison.foods_only_in_b[:5]:
+            console.print(f"  + {f[:50]}")
+        if len(comparison.foods_only_in_b) > 5:
+            console.print(f"  ... and {len(comparison.foods_only_in_b) - 5} more")
+
+    console.print(f"\n[dim]Foods in common: {len(comparison.foods_in_both)}[/dim]")
 
 
 # ============================================================================

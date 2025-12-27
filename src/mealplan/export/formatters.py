@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from mealplan.export.llm_prompt import clean_food_name
-from mealplan.optimizer.models import KKTAnalysis, OptimizationResult
+from mealplan.export.meal_allocator import allocate_to_meals, format_meal_allocation
+from mealplan.optimizer.models import KKTAnalysis, OptimizationRequest, OptimizationResult
+from mealplan.optimizer.serialization import serialize_request
 
 
 class TableFormatter:
@@ -119,6 +121,9 @@ class JSONFormatter:
         result: OptimizationResult,
         profile_name: Optional[str] = None,
         run_id: Optional[int] = None,
+        request: Optional[OptimizationRequest] = None,
+        data_quality_warnings: Optional[list[str]] = None,
+        include_meal_allocation: bool = False,
     ) -> str:
         """Return JSON string.
 
@@ -126,11 +131,14 @@ class JSONFormatter:
             result: Optimization result to format
             profile_name: Optional profile name
             run_id: Optional run ID
+            request: Optional optimization request (for constraints_used)
+            data_quality_warnings: Optional list of data quality warning messages
+            include_meal_allocation: Whether to include meal slot allocation
 
         Returns:
             JSON string
         """
-        data = {
+        data: dict[str, Any] = {
             "run_id": run_id,
             "timestamp": datetime.now().isoformat(),
             "profile": profile_name,
@@ -162,6 +170,28 @@ class JSONFormatter:
             },
             "solver_info": result.solver_info,
         }
+
+        # Include constraints_used for what-if analysis round-trip
+        if request is not None:
+            data["constraints_used"] = serialize_request(request)
+
+        # Include data quality warnings if any
+        if data_quality_warnings:
+            data["data_quality_warnings"] = data_quality_warnings
+
+        # Include meal allocation if requested and successful
+        if include_meal_allocation and result.success and result.foods:
+            # Get total calories from nutrients
+            total_calories = 0.0
+            for n in result.nutrients:
+                if n.nutrient_id == 1008:  # Energy
+                    total_calories = n.amount
+                    break
+
+            if total_calories > 0:
+                meals = allocate_to_meals(result.foods, total_calories)
+                data["meal_allocation"] = format_meal_allocation(meals)
+
         return json.dumps(data, indent=2)
 
 
@@ -343,6 +373,9 @@ def format_result(
     profile_name: Optional[str] = None,
     run_id: Optional[int] = None,
     console: Optional[Console] = None,
+    request: Optional[OptimizationRequest] = None,
+    data_quality_warnings: Optional[list[str]] = None,
+    include_meal_allocation: bool = False,
 ) -> Optional[str]:
     """Format optimization result in the specified format.
 
@@ -352,6 +385,9 @@ def format_result(
         profile_name: Optional profile name
         run_id: Optional run ID
         console: Rich console (for table format)
+        request: Optional optimization request (for constraints_used in JSON)
+        data_quality_warnings: Optional list of data quality warning messages
+        include_meal_allocation: Whether to include meal slot allocation (JSON only)
 
     Returns:
         Formatted string for json/markdown, None for table (prints directly)
@@ -362,7 +398,9 @@ def format_result(
         return None
     elif output_format == "json":
         formatter = JSONFormatter()
-        return formatter.format(result, profile_name, run_id)
+        return formatter.format(
+            result, profile_name, run_id, request, data_quality_warnings, include_meal_allocation
+        )
     elif output_format == "markdown":
         formatter = MarkdownFormatter()
         return formatter.format(result, profile_name)

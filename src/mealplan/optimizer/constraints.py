@@ -11,6 +11,7 @@ import numpy as np
 import yaml
 
 from mealplan.data.nutrient_ids import get_nutrient_id
+from mealplan.data.quality import detect_incomplete_foods, format_quality_warnings
 from mealplan.optimizer.models import (
     FoodConstraint,
     NutrientConstraint,
@@ -48,9 +49,14 @@ class ConstraintBuilder:
                 - nutrient_maxs: np.ndarray - max constraint per nutrient (inf if none)
                 - food_bounds: list[tuple] - (min, max) grams for each food
                 - nutrient_ids: list[int] - ordered list of nutrient IDs
+                - data_quality_warnings: list[str] - warnings about incomplete data
         """
         self._load_eligible_foods()
         self._load_required_nutrients()
+
+        # Check for data quality issues
+        quality_issues = detect_incomplete_foods(self.conn, self._food_ids)
+        quality_warnings = format_quality_warnings(quality_issues)
 
         return {
             "food_ids": self._food_ids,
@@ -64,10 +70,43 @@ class ConstraintBuilder:
             # Metadata for reporting
             "total_eligible_foods": self._total_eligible_foods,
             "was_sampled": self._was_sampled,
+            "data_quality_warnings": quality_warnings,
         }
 
     def _load_eligible_foods(self) -> None:
-        """Load food IDs that pass tag filters (and have prices if not in feasibility mode)."""
+        """Load food IDs that pass tag filters (and have prices if not in feasibility mode).
+
+        If explicit_food_ids is set on the request, uses those directly (bypassing
+        tag filtering but still applying exclude_tags and food_constraints).
+        """
+        # If explicit food IDs are provided, use those directly
+        if self.request.explicit_food_ids:
+            self._food_ids = list(self.request.explicit_food_ids)
+
+            # Still apply exclude_tags if specified
+            if self.request.exclude_tags:
+                placeholders = ",".join("?" * len(self.request.exclude_tags))
+                query = f"""
+                    SELECT fdc_id FROM food_tags
+                    WHERE tag IN ({placeholders})
+                """
+                cursor = self.conn.execute(query, self.request.exclude_tags)
+                excluded_by_tag = {row[0] for row in cursor.fetchall()}
+                self._food_ids = [fid for fid in self._food_ids if fid not in excluded_by_tag]
+
+            # Apply food-specific exclusions
+            excluded = {
+                fc.fdc_id
+                for fc in self.request.food_constraints
+                if fc.max_grams == 0
+            }
+            self._food_ids = [fid for fid in self._food_ids if fid not in excluded]
+
+            self._total_eligible_foods = len(self._food_ids)
+            self._was_sampled = False
+            return
+
+        # Standard flow: load from database with tag filters
         # In feasibility mode, we don't need prices
         # In cost minimization mode, we require prices
         if self.request.mode == "feasibility":

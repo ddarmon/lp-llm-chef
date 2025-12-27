@@ -60,6 +60,11 @@ class OptimizationRequest:
     use_quadratic_penalty: bool = True
     lambda_cost: float = 1.0
     lambda_deviation: float = 0.001
+    # Explicit food pool (bypasses tag filtering when set)
+    explicit_food_ids: Optional[list[int]] = None
+    # For sparse solver (P2 feature)
+    max_foods_in_solution: Optional[int] = None
+    min_grams_if_included: float = 50.0
 
 
 @dataclass

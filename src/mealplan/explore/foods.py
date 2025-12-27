@@ -22,6 +22,7 @@ class FoodFilter:
     max_cost: Optional[float] = None
     has_tag: Optional[str] = None
     has_price: Optional[bool] = None
+    category: Optional[str] = None  # protein, fat, carb, legume, vegetable, fruit, mixed
     limit: int = 50
 
 
@@ -121,8 +122,10 @@ def explore_foods(
     if having_parts:
         query += f" HAVING {' AND '.join(having_parts)}"
 
+    # When category filter is used, fetch more results since we'll filter after
+    fetch_limit = filters.limit * 5 if filters.category else filters.limit
     query += " ORDER BY f.description LIMIT ?"
-    params.append(filters.limit)
+    params.append(fetch_limit)
 
     cursor = conn.execute(query, params)
     rows = cursor.fetchall()
@@ -140,6 +143,24 @@ def explore_foods(
             "fat_per_100g": row["fat_per_100g"],
             "carbs_per_100g": row["carbs_per_100g"],
         })
+
+    # Apply category filter if specified
+    if filters.category:
+        from mealplan.data.food_categories import FoodCategory, classify_foods_in_db
+
+        try:
+            target_category = FoodCategory(filters.category.lower())
+        except ValueError:
+            # Invalid category, return empty
+            return []
+
+        fdc_ids = [r["fdc_id"] for r in results]
+        categories = classify_foods_in_db(conn, fdc_ids)
+
+        results = [
+            r for r in results
+            if categories.get(r["fdc_id"]) == target_category
+        ][:filters.limit]  # Apply limit after category filtering
 
     return results
 

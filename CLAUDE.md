@@ -91,9 +91,21 @@ uv run mealplan schema all                 # Complete schema documentation
 Food exploration (for iterative diet design):
 ``` bash
 uv run mealplan explore foods "salmon" --min-protein 25 --json
+uv run mealplan explore foods "chicken" --category protein --json  # Filter by macro category
 uv run mealplan explore high-nutrient protein --min 30 --tag staple
 uv run mealplan explore compare 170567 170568 --nutrients protein,fat
 uv run mealplan explore whatif --base latest --add "fiber:min:40" --json
+uv run mealplan explore suggest-pools --json           # Generate food pool suggestions
+uv run mealplan explore runs --limit 10                # List recent optimization runs
+uv run mealplan explore compare-runs 5 8 --json        # Compare two runs
+```
+
+Advanced optimization:
+``` bash
+uv run mealplan optimize --foods 175167,171287,172421  # Use explicit food IDs
+uv run mealplan optimize --max-foods-in-solution 10    # Limit to N foods (sparse)
+uv run mealplan optimize --allocate-meals --json       # Distribute into meals
+uv run mealplan optimize-batch pools.json --json       # Run multiple pools at once
 ```
 
 JSON output (add `--json` to any command):
@@ -159,6 +171,27 @@ uv run mealplan info 170567 --json         # Nutrient data as JSON
         a baseline optimization run
     -   `diagnosis.py`: `diagnose_infeasibility()` for explaining why
         optimization fails and suggesting fixes
+    -   `suggest.py`: `suggest_pools()` generates balanced/high-protein/budget
+        food pool suggestions for LLM meta-optimization
+    -   `compare.py`: `compare_runs()` for comparing optimization runs
+
+-   **`optimizer/`**: Core optimization:
+    -   `sparse_solver.py`: Two-phase heuristic for limiting food count
+        (`--max-foods-in-solution`). Phase 1 runs full QP, Phase 2 re-optimizes
+        with only top N foods.
+    -   `batch.py`: `run_batch_optimization()` runs multiple food pools
+        in parallel for LLM comparison
+    -   `serialization.py`: Request round-trip serialization for whatif analysis
+
+-   **`data/`**: Data utilities:
+    -   `food_categories.py`: Macro-based food classification (protein/fat/carb/
+        vegetable/legume/fruit) using calorie percentages
+    -   `quality.py`: Detects missing/inconsistent nutrient data, calculates
+        fallback energy using Atwater factors (4p + 4c + 9f)
+
+-   **`export/`**: Output formatters:
+    -   `meal_allocator.py`: Post-hoc meal distribution using keyword heuristics
+        (eggs→breakfast, fish→lunch/dinner, nuts→snack)
 
 ### Database Schema
 
@@ -219,7 +252,9 @@ Example profiles in `examples/constraints/`:
 ## Using as an LLM Tool
 
 This tool is designed to be invoked by LLM agents (Claude Code, Codex CLI,
-etc.) for iterative diet planning. The workflow:
+etc.) for iterative diet planning.
+
+### Basic Workflow
 
 1.  **Get schema**: `uv run mealplan schema all` returns constraint vocabulary
 2.  **LLM translates goals**: User says "I want to lose weight, vegetarian"
@@ -228,6 +263,23 @@ etc.) for iterative diet planning. The workflow:
 4.  **Iterate**: `uv run mealplan explore whatif --add "protein:min:180" --json`
 5.  **Diagnose failures**: If infeasible, response includes diagnosis with
     suggested constraint relaxations
+
+### Advanced Meta-Optimization Workflow
+
+For LLMs that want to explore multiple diet configurations:
+
+1.  **Generate pool suggestions**: `uv run mealplan explore suggest-pools --json`
+    Returns balanced, high-protein, and budget food pools
+2.  **Run batch optimization**: Create a pools.json and run
+    `uv run mealplan optimize-batch pools.json --json` to compare pools
+3.  **Or use explicit foods**: `uv run mealplan optimize --foods 175167,171287 --json`
+    Bypass tag filtering with specific food IDs
+4.  **Limit food count**: `uv run mealplan optimize --max-foods-in-solution 10 --json`
+    Get meal-prep friendly solutions with fewer distinct foods
+5.  **Allocate to meals**: `uv run mealplan optimize --allocate-meals --json`
+    Distributes foods into breakfast/lunch/dinner/snack slots
+6.  **Compare runs**: `uv run mealplan explore compare-runs 5 8 --json`
+    See differences between optimization runs
 
 ### JSON Response Envelope
 
@@ -238,10 +290,18 @@ All `--json` output uses this structure:
   "command": "optimize",
   "data": { ... },
   "errors": [],
-  "warnings": [],
+  "warnings": ["Broccoli: Stored energy differs from calculated"],
   "suggestions": ["Protein is at minimum - consider relaxing"],
   "human_summary": "Optimal: 12 foods, 1847 kcal, $8.50/day"
 }
 ```
 
 The `human_summary` field ensures transparency for the person watching.
+
+### Data Quality Warnings
+
+The optimizer now detects foods with missing or inconsistent nutrient data:
+- Foods with zero energy but non-zero macros
+- Energy values that don't match Atwater factor calculations (4p + 4c + 9f)
+
+These appear in `warnings` to help LLMs understand data limitations.
