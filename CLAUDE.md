@@ -86,6 +86,23 @@ uv run mealplan profile create <name> --from-file <yaml>
 uv run mealplan profile wizard             # Interactive profile creation wizard
 ```
 
+### Weight Tracking Commands
+``` bash
+uv run mealplan user create --age 38 --sex male --height 72 --activity moderate
+uv run mealplan user update --weight 185 --goal "fat_loss:165"
+uv run mealplan user show                  # Show current user profile
+
+uv run mealplan weight add 184.2           # Log today's weight (EMA computed)
+uv run mealplan weight add 183.8 --date 2025-12-27
+uv run mealplan weight list --days 30      # Show weight history with trends
+
+uv run mealplan calories log 1900          # Log planned intake for today
+uv run mealplan calories log 1900 --date 2025-12-27
+
+uv run mealplan tdee estimate              # Run Kalman filter on accumulated data
+uv run mealplan tdee progress              # Show comprehensive progress report
+```
+
 ### Agent/LLM Commands
 
 Schema export (for LLMs to understand constraint vocabulary):
@@ -237,11 +254,26 @@ uv run mealplan info 170567 --json         # Nutrient data as JSON
     -   `optimizer.py`: Small QP (~16-20 variables) with slot-aware target portions.
         `run_template_optimization()` is the main entry point.
 
+-   **`tracking/`**: Weight tracking and adaptive TDEE learning:
+    -   `models.py`: Data models (UserProfile, WeightEntry, CalorieEntry, TDEEEstimate)
+    -   `queries.py`: Database queries (UserQueries, WeightQueries, CalorieQueries,
+        TDEEQueries) for CRUD operations on tracking data
+    -   `ema.py`: Hacker's Diet exponentially smoothed moving average (EMA) for
+        trend calculation. Formula: `T_n = T_{n-1} + 0.1 × (W_n - T_{n-1})`
+    -   `tdee_filter.py`: Scalar Kalman filter for learning TDEE bias. Updates
+        weekly based on implied deficit (from weight trend) vs expected deficit
+        (from planned calories). Converges after 2-3 weeks of data.
+    -   `diagnostics.py`: Progress reports comparing Mifflin-St Jeor baseline
+        with learned TDEE, trend analysis, goal progress estimation
+
 ### Database Schema
 
-8 tables in SQLite: `foods`, `nutrients`, `food_nutrients`, `prices`,
-`servings`, `food_tags`, `constraint_profiles`, `optimization_runs`. All
-nutrient values stored per 100g (USDA standard).
+12 tables in SQLite:
+- Core: `foods`, `nutrients`, `food_nutrients`, `prices`, `servings`, `food_tags`
+- Optimization: `constraint_profiles`, `optimization_runs`
+- Tracking: `user_profiles`, `weight_log`, `calorie_log`, `tdee_estimates`
+
+All nutrient values stored per 100g (USDA standard).
 
 ### Constraint Profiles (YAML)
 
@@ -349,6 +381,7 @@ This project includes Claude Code skills (slash commands) for interactive meal p
 | `/template` | "realistic meals", "different foods each meal" | Template-based meal composition |
 | `/multiperiod` | "per meal calories", "balanced meals" | Per-meal constraint optimization |
 | `/recipes` | "create recipes", "weekly menu" | Generate recipes from optimization |
+| `/tracking` | "log my weight", "how am I doing", "TDEE" | Weight tracking and adaptive TDEE learning |
 
 Skills are defined in `.claude/skills/*/SKILL.md`.
 
@@ -357,6 +390,7 @@ Skills are defined in `.claude/skills/*/SKILL.md`.
 1. **Start with `/mealplan`** - Gathers user goals and runs optimization
 2. **Or use `/template` directly** - For users who want realistic meals immediately
 3. **Follow with `/recipes`** - Generate practical meal plans and recipes
+4. **Use `/tracking` daily** - Log weight and calories to learn personalized TDEE
 
 ## Using as an LLM Tool
 

@@ -42,6 +42,11 @@ from natural language goals.
     quantities. Produces realistic meals with different foods at each meal.
 -   **Food categories**: Classify foods by macro dominance (protein, carb,
     fat, vegetable, legume)
+-   **Weight tracking**: Hacker's Diet-style exponentially smoothed moving
+    average (EMA) for trend tracking that filters out daily noise
+-   **Adaptive TDEE learning**: Kalman filter learns your personalized TDEE
+    from weight observations over time, improving on generic Mifflin-St Jeor
+    estimates
 
 ## Installation
 
@@ -345,6 +350,23 @@ This ensures optimization only suggests foods you actually buy and cook with.
   `uv run mealplan profile list`            List saved profiles
 
   `uv run mealplan profile show`            Show profile details
+
+  `uv run mealplan user create`             Create user profile (age, sex,
+                                     height, activity level)
+
+  `uv run mealplan user show`               Show current user profile
+
+  `uv run mealplan weight add <lbs>`        Log today's weight (computes EMA
+                                     trend automatically)
+
+  `uv run mealplan weight list`             Show weight history with trends
+
+  `uv run mealplan calories log <kcal>`     Log planned calorie intake
+
+  `uv run mealplan tdee estimate`           Run Kalman filter to estimate
+                                     personalized TDEE
+
+  `uv run mealplan tdee progress`           Show weight/TDEE progress report
   ----------------------------------------------------------------------------
 
 ## Advanced LLM Features
@@ -352,7 +374,8 @@ This ensures optimization only suggests foods you actually buy and cook with.
 These features are designed for LLM agents doing iterative diet optimization.
 
 **Claude Code users**: This project includes slash commands (`/mealplan`, `/template`,
-`/multiperiod`, `/recipes`) for interactive meal planning. See `.claude/skills/` for details.
+`/multiperiod`, `/recipes`, `/tracking`) for interactive meal planning and weight tracking.
+See `.claude/skills/` for details.
 
 ### Meta-Optimization
 
