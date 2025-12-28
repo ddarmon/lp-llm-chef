@@ -87,6 +87,61 @@ CREATE TABLE IF NOT EXISTS optimization_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_optimization_runs_date ON optimization_runs(created_at);
+
+-- User profiles for weight tracking and TDEE learning
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    age INTEGER,
+    sex TEXT CHECK(sex IN ('male', 'female')),
+    height_inches REAL,
+    weight_lbs REAL,
+    activity_level TEXT CHECK(activity_level IN ('sedentary', 'lightly_active', 'moderate', 'active', 'very_active')),
+    goal TEXT,
+    target_weight_lbs REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Weight log with EMA trend (Hacker's Diet style)
+CREATE TABLE IF NOT EXISTS weight_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    weight_lbs REAL NOT NULL,
+    trend_lbs REAL NOT NULL,
+    measured_at DATE NOT NULL,
+    notes TEXT,
+    UNIQUE(user_id, measured_at),
+    FOREIGN KEY (user_id) REFERENCES user_profiles(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_weight_log_user_date ON weight_log(user_id, measured_at);
+
+-- Calorie log for TDEE learning
+CREATE TABLE IF NOT EXISTS calorie_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    planned_calories REAL NOT NULL,
+    notes TEXT,
+    UNIQUE(user_id, date),
+    FOREIGN KEY (user_id) REFERENCES user_profiles(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calorie_log_user_date ON calorie_log(user_id, date);
+
+-- TDEE estimates from Kalman filter
+CREATE TABLE IF NOT EXISTS tdee_estimates (
+    estimate_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    estimated_at DATE NOT NULL,
+    mifflin_tdee REAL NOT NULL,
+    tdee_bias REAL NOT NULL DEFAULT 0.0,
+    variance REAL NOT NULL DEFAULT 10000.0,
+    adjusted_tdee REAL NOT NULL,
+    UNIQUE(user_id, estimated_at),
+    FOREIGN KEY (user_id) REFERENCES user_profiles(user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tdee_estimates_user_date ON tdee_estimates(user_id, estimated_at);
 """
 
 
