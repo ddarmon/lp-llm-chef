@@ -42,6 +42,10 @@ app.add_typer(profile_app, name="profile")
 app.add_typer(schema_app, name="schema")
 app.add_typer(explore_app, name="explore")
 
+# Patterns subcommand
+patterns_app = typer.Typer(help="Manage dietary patterns")
+app.add_typer(patterns_app, name="patterns")
+
 
 # ============================================================================
 # Helper for JSON output
@@ -289,9 +293,21 @@ def optimize(
     foods: Optional[str] = typer.Option(
         None, "--foods", help="Comma-separated FDC IDs to include (bypasses tag filtering)"
     ),
+    pattern: Optional[list[str]] = typer.Option(
+        None, "--pattern", help="Dietary pattern (pescatarian, keto, slow_carb, etc). Repeatable."
+    ),
+    min_protein: Optional[float] = typer.Option(
+        None, "--min-protein", help="Minimum protein per 100g for pattern foods (e.g., 10 for high-protein pool)"
+    ),
+    goal: Optional[str] = typer.Option(
+        None, "--goal", help="Body comp goal, e.g. 'fat_loss:185lbs:165lbs' or 'maintenance'"
+    ),
     days: int = typer.Option(1, "--days", "-d", help="Number of days to plan"),
     output: str = typer.Option(
         "table", "--output", "-o", help="Output format: table, json, markdown"
+    ),
+    practical: bool = typer.Option(
+        False, "--practical", help="Output consolidated meals (4-6 foods/meal) with shopping list"
     ),
     save: bool = typer.Option(True, "--save/--no-save", help="Save run to history"),
     minimize_cost: bool = typer.Option(
@@ -315,6 +331,15 @@ def optimize(
     multiperiod: bool = typer.Option(
         False, "--multiperiod", "-m", help="Use multi-period solver (auto-detected if profile has 'meals' section)"
     ),
+    include_all_foods: bool = typer.Option(
+        False, "--include-all-foods", help="Use full USDA database instead of curated staples (may include exotic foods)"
+    ),
+    template: bool = typer.Option(
+        False, "--template", "-t", help="Use template-based meal composition (recommended for realistic meals)"
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="Random seed for template-based selection (for reproducibility)"
+    ),
 ) -> None:
     """Run meal plan optimization."""
     from mealplan.agent.response import create_response
@@ -326,8 +351,12 @@ def optimize(
         load_multiperiod_profile_from_yaml,
         load_profile_from_yaml,
     )
-    from mealplan.optimizer.models import OptimizationRequest
+    from mealplan.optimizer.models import OptimizationRequest, NutrientConstraint
     from mealplan.optimizer.multiperiod_solver import solve_multiperiod_diet
+    from mealplan.optimizer.multiperiod_models import (
+        MultiPeriodRequest,
+        derive_default_meal_configs,
+    )
     from mealplan.optimizer.solver import solve_diet_problem
 
     db = get_db()
@@ -403,9 +432,31 @@ def optimize(
     request.planning_days = days
     request.max_foods = max_foods
 
+    # Create default multi-period request if --multiperiod flag but no YAML with meals
+    if use_multiperiod and mp_request is None:
+        # Derive meal configs from the request's daily constraints
+        daily_cal_range = request.calorie_range
+        meal_configs = derive_default_meal_configs(daily_cal_range, request.nutrient_constraints)
+
+        mp_request = MultiPeriodRequest(
+            daily_calorie_range=daily_cal_range,
+            daily_nutrient_constraints=list(request.nutrient_constraints),
+            meals=meal_configs,
+            mode=request.mode,
+            exclude_tags=list(request.exclude_tags),
+            include_tags=list(request.include_tags),
+            max_foods=request.max_foods,
+            explicit_food_ids=request.explicit_food_ids,
+        )
+
+        if not json_output:
+            console.print("[dim]Created default multi-period config (25/35/35/5% meal splits)[/dim]")
+
     # Override mode if --minimize-cost flag is set
     if minimize_cost:
         request.mode = "minimize_cost"
+        if mp_request is not None:
+            mp_request.mode = "minimize_cost"
 
     # Parse explicit food IDs if provided
     if foods:
@@ -427,8 +478,257 @@ def optimize(
                 console.print("[red]Use comma-separated numeric FDC IDs, e.g., --foods 175167,171287,172421[/red]")
             raise typer.Exit(1)
 
+    # Handle --goal flag for body composition targets
+    if goal:
+        from mealplan.profiles.body_calc import calculate_targets, parse_goal_string
+        from mealplan.optimizer.models import NutrientConstraint
+        from mealplan.data.nutrient_ids import NUTRIENT_IDS
+
+        try:
+            parsed = parse_goal_string(goal)
+            # If weight not in goal string, use default
+            weight = parsed.get("weight_lbs") or 170.0
+            target_weight = parsed.get("target_weight_lbs")
+
+            targets = calculate_targets(
+                age=35,  # Default age if not specified
+                sex="male",  # Default sex if not specified
+                height_inches=70,  # Default height if not specified
+                weight_lbs=weight,
+                goal=parsed["goal"],
+                target_weight_lbs=target_weight,
+                activity_level="moderate",
+            )
+
+            # Update request with calculated targets
+            request.calorie_range = (targets.calories_min, targets.calories_max)
+
+            # Add protein constraint
+            protein_constraint = NutrientConstraint(
+                nutrient_id=NUTRIENT_IDS["protein"],
+                min_value=float(targets.protein_min),
+                max_value=float(targets.protein_max),
+            )
+            request.nutrient_constraints = list(request.nutrient_constraints) + [protein_constraint]
+
+            # Update mp_request if it was already created
+            if mp_request is not None:
+                mp_request.daily_calorie_range = (targets.calories_min, targets.calories_max)
+                mp_request.daily_nutrient_constraints = list(request.nutrient_constraints)
+                # Regenerate meal configs with new calorie range
+                meal_configs = derive_default_meal_configs(
+                    (targets.calories_min, targets.calories_max),
+                    request.nutrient_constraints
+                )
+                mp_request.meals = meal_configs
+
+            if not json_output:
+                console.print(f"[dim]Goal '{parsed['goal']}': {targets.calories_min}-{targets.calories_max} kcal, "
+                            f"{targets.protein_min}-{targets.protein_max}g protein[/dim]")
+                if targets.projected_weeks:
+                    console.print(f"[dim]Projected timeline: {targets.projected_weeks} weeks[/dim]")
+
+        except (ValueError, KeyError) as e:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "optimize",
+                    "errors": [f"Invalid --goal format: {goal}. Error: {e}"],
+                    "suggestions": [
+                        "Use format: goal:weight:target_weight",
+                        "Example: --goal fat_loss:185lbs:165lbs",
+                        "Available goals: fat_loss, aggressive_fat_loss, maintenance, lean_gain, muscle_gain",
+                    ],
+                })
+            else:
+                console.print(f"[red]Invalid --goal format: {goal}[/red]")
+                console.print("[red]Use format: goal:weight:target_weight (e.g., fat_loss:185lbs:165lbs)[/red]")
+            raise typer.Exit(1)
+
     # Run optimization with verbose output
     with db.get_connection() as conn:
+        # Handle --pattern flag for dietary patterns
+        if pattern and not foods:
+            from mealplan.data.pattern_pools import build_food_pool
+
+            try:
+                pattern_food_ids = build_food_pool(
+                    conn,
+                    patterns=pattern,
+                    max_foods=max_foods,
+                    min_protein_per_100g=min_protein,
+                    require_calorie_data=True,
+                    balance_categories=True,
+                    use_staples=not include_all_foods,
+                )
+
+                if not pattern_food_ids:
+                    if json_output:
+                        output_json({
+                            "success": False,
+                            "command": "optimize",
+                            "errors": [f"No foods found matching patterns: {pattern}"],
+                            "suggestions": ["Check pattern names with 'mealplan patterns list'"],
+                        })
+                    else:
+                        console.print(f"[red]No foods found matching patterns: {pattern}[/red]")
+                    raise typer.Exit(1)
+
+                request.explicit_food_ids = pattern_food_ids
+                if mp_request is not None:
+                    mp_request.explicit_food_ids = pattern_food_ids
+
+                if not json_output:
+                    source = "staples" if not include_all_foods else "full USDA"
+                    console.print(f"[dim]Pattern '{'+'.join(pattern)}' ({source}): {len(pattern_food_ids)} foods[/dim]")
+
+            except ValueError as e:
+                if json_output:
+                    output_json({
+                        "success": False,
+                        "command": "optimize",
+                        "errors": [str(e)],
+                        "suggestions": ["Available patterns: pescatarian, vegetarian, vegan, keto, slow_carb, mediterranean, paleo, whole30"],
+                    })
+                else:
+                    console.print(f"[red]{e}[/red]")
+                raise typer.Exit(1)
+
+        # Template-based optimization path (recommended for realistic meals)
+        if template:
+            from mealplan.templates.optimizer import run_template_optimization
+            from mealplan.templates.models import SelectionStrategy
+
+            if not pattern:
+                if json_output:
+                    output_json({
+                        "success": False,
+                        "command": "optimize",
+                        "errors": ["--template requires --pattern to be specified"],
+                        "suggestions": [
+                            "Add --pattern pescatarian --pattern slow_carb",
+                            "Available patterns: pescatarian, vegetarian, vegan, keto, slow_carb, mediterranean, paleo, whole30",
+                        ],
+                    })
+                else:
+                    console.print("[red]--template requires --pattern to be specified[/red]")
+                raise typer.Exit(1)
+
+            # Get calorie/protein targets from request
+            cal_min, cal_max = request.calorie_range if request.calorie_range else (1800, 2200)
+            prot_min = next((n.min_value for n in request.nutrient_constraints if n.nutrient_id == 1003 and n.min_value), 150)
+            prot_max = next((n.max_value for n in request.nutrient_constraints if n.nutrient_id == 1003 and n.max_value), 200)
+
+            if not json_output:
+                console.print(f"[dim]Using template-based optimization for {'+'.join(pattern)}[/dim]")
+
+            template_result = run_template_optimization(
+                conn=conn,
+                patterns=pattern,
+                daily_calories=(cal_min, cal_max),
+                daily_protein=(prot_min, prot_max),
+                strategy=SelectionStrategy.RANDOM,
+                seed=seed,
+                max_retries=5,
+            )
+
+            # Format template output
+            if json_output:
+                if template_result.success:
+                    response_data = {
+                        "run_id": None,
+                        "status": "optimal",
+                        "profile": profile_name,
+                        "template_mode": True,
+                        "template_name": template_result.template_name,
+                        "selection_attempts": template_result.selection_attempts,
+                        "meals": {
+                            meal.meal_type.value: {
+                                "foods": [
+                                    {
+                                        "fdc_id": f.fdc_id,
+                                        "description": f.description,
+                                        "grams": float(round(f.grams, 1)),
+                                        "calories": float(round(f.calories, 0)),
+                                        "protein": float(round(f.protein, 1)),
+                                        "slot": f.slot_name,
+                                    }
+                                    for f in meal.foods
+                                ],
+                                "totals": {
+                                    "calories": float(round(meal.total_calories, 0)),
+                                    "protein": float(round(meal.total_protein, 1)),
+                                    "carbs": float(round(meal.total_carbs, 1)),
+                                    "fat": float(round(meal.total_fat, 1)),
+                                },
+                            }
+                            for meal in template_result.meals
+                        },
+                        "daily_totals": {
+                            "calories": float(round(template_result.daily_calories, 0)),
+                            "protein": float(round(template_result.daily_protein, 1)),
+                            "carbs": float(round(template_result.daily_carbs, 1)),
+                            "fat": float(round(template_result.daily_fat, 1)),
+                        },
+                        "human_summary": (
+                            f"Template '{template_result.template_name}': "
+                            f"{template_result.daily_calories:.0f} kcal, "
+                            f"{template_result.daily_protein:.0f}g protein"
+                        ),
+                    }
+                    output_json(create_response(
+                        success=True,
+                        command="optimize",
+                        data=response_data,
+                        warnings=[],
+                        suggestions=[],
+                        human_summary=response_data["human_summary"],
+                    ).to_dict())
+                else:
+                    output_json(create_response(
+                        success=False,
+                        command="optimize",
+                        data={},
+                        errors=[template_result.message],
+                        suggestions=["Try a different --pattern combination or relax constraints"],
+                        human_summary=f"Failed: {template_result.message}",
+                    ).to_dict())
+                raise typer.Exit(0 if template_result.success else 1)
+            else:
+                # Rich table output for template results
+                if template_result.success:
+                    console.print(Panel(
+                        f"Template: [bold]{template_result.template_name}[/bold]\n"
+                        f"Selection attempts: {template_result.selection_attempts}",
+                        title="Template-Based Meal Plan",
+                    ))
+
+                    for meal in template_result.meals:
+                        table = Table(title=f"{meal.meal_type.value.capitalize()} ({meal.total_calories:.0f} kcal)")
+                        table.add_column("Food", style="cyan")
+                        table.add_column("Amount", justify="right")
+                        table.add_column("Slot", style="dim")
+
+                        for food in meal.foods:
+                            # Truncate description if needed
+                            desc = food.description[:45] + "..." if len(food.description) > 48 else food.description
+                            table.add_row(desc, f"{food.grams:.0f}g", food.slot_name)
+
+                        console.print(table)
+                        console.print(f"[dim]P: {meal.total_protein:.0f}g | C: {meal.total_carbs:.0f}g | F: {meal.total_fat:.0f}g[/dim]\n")
+
+                    console.print(Panel(
+                        f"Calories: {template_result.daily_calories:.0f}\n"
+                        f"Protein: {template_result.daily_protein:.0f}g\n"
+                        f"Carbs: {template_result.daily_carbs:.0f}g\n"
+                        f"Fat: {template_result.daily_fat:.0f}g",
+                        title="Daily Totals",
+                    ))
+                else:
+                    console.print(f"[red]Template optimization failed: {template_result.message}[/red]")
+
+                raise typer.Exit(0 if template_result.success else 1)
+
         # Multi-period optimization path
         if use_multiperiod and mp_request is not None:
             # Apply explicit food IDs if provided
@@ -448,6 +748,16 @@ def optimize(
                 with console.status("[bold green]Optimizing (multi-period)..."):
                     mp_result = solve_multiperiod_diet(mp_request, conn, verbose=verbose)
 
+            # Apply --practical consolidation if requested
+            consolidated = None
+            shopping = None
+            if practical and mp_result.success:
+                from mealplan.export.meal_consolidator import consolidate_result, consolidated_result_to_dict
+                from mealplan.export.shopping_list import generate_shopping_list, shopping_list_to_dict
+
+                consolidated = consolidate_result(mp_result, max_foods_per_meal=5)
+                shopping = generate_shopping_list(consolidated, days=days if days > 1 else 7)
+
             # Format multi-period output
             if json_output:
                 response_data = {
@@ -455,37 +765,52 @@ def optimize(
                     "status": mp_result.status,
                     "profile": profile_name,
                     "multiperiod": True,
+                    "practical_mode": practical,
                 }
 
                 if mp_result.success:
-                    response_data["meals"] = {
-                        meal.meal_type.value: {
-                            "foods": [
-                                {
-                                    "fdc_id": f.fdc_id,
-                                    "description": f.description,
-                                    "grams": float(round(f.grams, 1)),
-                                    "calories": float(round(f.nutrients.get(1008, 0), 0)),
-                                }
-                                for f in meal.foods
-                            ],
-                            "totals": {
-                                "calories": float(round(meal.total_calories, 0)),
-                                "protein": float(round(meal.total_protein, 1)),
-                                "carbs": float(round(meal.total_carbs, 1)),
-                                "fat": float(round(meal.total_fat, 1)),
-                            },
+                    if consolidated:
+                        # Use consolidated output
+                        response_data["consolidated_meals"] = consolidated_result_to_dict(consolidated)["meals"]
+                        response_data["shopping_list"] = shopping_list_to_dict(shopping)
+                        response_data["daily_totals"] = {
+                            k: float(round(v, 1)) for k, v in consolidated.daily_totals.items()
                         }
-                        for meal in mp_result.meals
-                    }
-                    response_data["daily_totals"] = {
-                        k: float(round(v, 1)) for k, v in mp_result.daily_totals.items()
-                    }
-                    response_data["human_summary"] = (
-                        f"{len(mp_result.meals)} meals: "
-                        f"{mp_result.daily_totals['calories']:.0f} kcal, "
-                        f"{mp_result.daily_totals['protein']:.0f}g protein"
-                    )
+                        response_data["human_summary"] = (
+                            f"{len(consolidated.meals)} meals (consolidated): "
+                            f"{consolidated.daily_totals['calories']:.0f} kcal, "
+                            f"{consolidated.daily_totals['protein']:.0f}g protein"
+                        )
+                    else:
+                        # Use raw output
+                        response_data["meals"] = {
+                            meal.meal_type.value: {
+                                "foods": [
+                                    {
+                                        "fdc_id": f.fdc_id,
+                                        "description": f.description,
+                                        "grams": float(round(f.grams, 1)),
+                                        "calories": float(round(f.nutrients.get(1008, 0), 0)),
+                                    }
+                                    for f in meal.foods
+                                ],
+                                "totals": {
+                                    "calories": float(round(meal.total_calories, 0)),
+                                    "protein": float(round(meal.total_protein, 1)),
+                                    "carbs": float(round(meal.total_carbs, 1)),
+                                    "fat": float(round(meal.total_fat, 1)),
+                                },
+                            }
+                            for meal in mp_result.meals
+                        }
+                        response_data["daily_totals"] = {
+                            k: float(round(v, 1)) for k, v in mp_result.daily_totals.items()
+                        }
+                        response_data["human_summary"] = (
+                            f"{len(mp_result.meals)} meals: "
+                            f"{mp_result.daily_totals['calories']:.0f} kcal, "
+                            f"{mp_result.daily_totals['protein']:.0f}g protein"
+                        )
                 else:
                     response_data["errors"] = [mp_result.message]
                     if mp_result.infeasibility_diagnosis:
@@ -505,40 +830,79 @@ def optimize(
                 ).to_dict())
             else:
                 # Console output for multi-period
-                from rich.panel import Panel
-                from rich.table import Table
+                # Panel and Table are imported at module level
 
                 if mp_result.success:
-                    console.print(Panel(
-                        f"[bold green]Multi-Period Optimization Successful[/bold green]\n"
-                        f"Profile: {profile_name or 'default'}\n"
-                        f"Meals: {len(mp_result.meals)}",
-                        title="Result"
-                    ))
+                    if consolidated:
+                        # Practical mode: show consolidated meals + shopping list
+                        from mealplan.export.meal_consolidator import format_consolidated_result
+                        from mealplan.export.shopping_list import format_shopping_list
 
-                    for meal in mp_result.meals:
-                        table = Table(title=f"{meal.meal_type.value.title()} ({meal.total_calories:.0f} kcal)")
-                        table.add_column("Food", style="cyan")
-                        table.add_column("Grams", justify="right")
+                        console.print(Panel(
+                            f"[bold green]Practical Meal Plan (Consolidated)[/bold green]\n"
+                            f"Profile: {profile_name or 'default'}\n"
+                            f"Meals: {len(consolidated.meals)} (max 5 foods each)",
+                            title="Result"
+                        ))
 
-                        for food in meal.foods:
-                            from mealplan.export.llm_prompt import clean_food_name
-                            table.add_row(clean_food_name(food.description), f"{food.grams:.0f}g")
+                        for meal in consolidated.meals:
+                            table = Table(title=f"{meal.meal_name.title()} ({meal.total_calories:.0f} kcal)")
+                            table.add_column("Food", style="cyan")
+                            table.add_column("Amount", justify="right")
 
-                        console.print(table)
-                        console.print(
-                            f"[dim]P: {meal.total_protein:.0f}g | "
-                            f"C: {meal.total_carbs:.0f}g | "
-                            f"F: {meal.total_fat:.0f}g[/dim]\n"
-                        )
+                            for food in meal.foods:
+                                table.add_row(food.name, f"{food.grams:.0f}g")
 
-                    console.print(Panel(
-                        f"Calories: {mp_result.daily_totals['calories']:.0f}\n"
-                        f"Protein: {mp_result.daily_totals['protein']:.0f}g\n"
-                        f"Carbs: {mp_result.daily_totals['carbs']:.0f}g\n"
-                        f"Fat: {mp_result.daily_totals['fat']:.0f}g",
-                        title="Daily Totals"
-                    ))
+                            console.print(table)
+                            console.print(
+                                f"[dim]P: {meal.total_protein:.0f}g | "
+                                f"C: {meal.total_carbs:.0f}g | "
+                                f"F: {meal.total_fat:.0f}g[/dim]\n"
+                            )
+
+                        console.print(Panel(
+                            f"Calories: {consolidated.daily_totals['calories']:.0f}\n"
+                            f"Protein: {consolidated.daily_totals['protein']:.0f}g\n"
+                            f"Carbs: {consolidated.daily_totals['carbs']:.0f}g\n"
+                            f"Fat: {consolidated.daily_totals['fat']:.0f}g",
+                            title="Daily Totals"
+                        ))
+
+                        # Shopping list
+                        console.print("\n")
+                        console.print(format_shopping_list(shopping))
+                    else:
+                        # Standard output
+                        console.print(Panel(
+                            f"[bold green]Multi-Period Optimization Successful[/bold green]\n"
+                            f"Profile: {profile_name or 'default'}\n"
+                            f"Meals: {len(mp_result.meals)}",
+                            title="Result"
+                        ))
+
+                        for meal in mp_result.meals:
+                            table = Table(title=f"{meal.meal_type.value.title()} ({meal.total_calories:.0f} kcal)")
+                            table.add_column("Food", style="cyan")
+                            table.add_column("Grams", justify="right")
+
+                            for food in meal.foods:
+                                from mealplan.export.llm_prompt import clean_food_name
+                                table.add_row(clean_food_name(food.description), f"{food.grams:.0f}g")
+
+                            console.print(table)
+                            console.print(
+                                f"[dim]P: {meal.total_protein:.0f}g | "
+                                f"C: {meal.total_carbs:.0f}g | "
+                                f"F: {meal.total_fat:.0f}g[/dim]\n"
+                            )
+
+                        console.print(Panel(
+                            f"Calories: {mp_result.daily_totals['calories']:.0f}\n"
+                            f"Protein: {mp_result.daily_totals['protein']:.0f}g\n"
+                            f"Carbs: {mp_result.daily_totals['carbs']:.0f}g\n"
+                            f"Fat: {mp_result.daily_totals['fat']:.0f}g",
+                            title="Daily Totals"
+                        ))
                 else:
                     console.print(f"[red]Optimization failed: {mp_result.message}[/red]")
                     if mp_result.infeasibility_diagnosis:
@@ -2377,6 +2741,87 @@ def profile_delete(
         })
     else:
         console.print(f"[green]Deleted profile '{name}'[/green]")
+
+
+# ============================================================================
+# Patterns Commands
+# ============================================================================
+
+
+@patterns_app.command("list")
+def patterns_list(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """List available dietary patterns."""
+    from mealplan.data.dietary_patterns import list_patterns, DIETARY_PATTERNS
+
+    patterns = list_patterns()
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "patterns list",
+            "data": {"patterns": patterns},
+            "human_summary": f"{len(patterns)} dietary patterns available",
+        })
+    else:
+        from rich.table import Table
+
+        table = Table(title="Available Dietary Patterns")
+        table.add_column("Name", style="cyan")
+        table.add_column("Description")
+
+        for p in patterns:
+            table.add_row(p["name"], p["description"])
+
+        console.print(table)
+        console.print(f"\n[dim]Use with: mealplan optimize --pattern <name>[/dim]")
+
+
+@patterns_app.command("info")
+def patterns_info(
+    name: str = typer.Argument(..., help="Pattern name"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Show details about a dietary pattern."""
+    from mealplan.data.dietary_patterns import get_pattern
+
+    pattern = get_pattern(name)
+    if not pattern:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "patterns info",
+                "errors": [f"Pattern '{name}' not found"],
+                "suggestions": ["Use 'mealplan patterns list' to see available patterns"],
+            })
+        else:
+            console.print(f"[red]Pattern '{name}' not found[/red]")
+        raise typer.Exit(1)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "patterns info",
+            "data": {
+                "name": pattern.name,
+                "description": pattern.description,
+                "include_keywords_count": len(pattern.include_keywords),
+                "exclude_keywords_count": len(pattern.exclude_keywords),
+                "sample_exclude": pattern.exclude_keywords[:10],
+                "has_macro_targets": pattern.macro_targets is not None,
+            },
+            "human_summary": f"Pattern '{name}': {pattern.description}",
+        })
+    else:
+        console.print(f"[bold]{pattern.name}[/bold]")
+        console.print(f"  {pattern.description}")
+        console.print(f"\n  Include keywords: {len(pattern.include_keywords)}")
+        console.print(f"  Exclude keywords: {len(pattern.exclude_keywords)}")
+        if pattern.exclude_keywords:
+            console.print(f"  Sample excludes: {', '.join(pattern.exclude_keywords[:10])}")
+        if pattern.macro_targets:
+            console.print(f"  Has macro targets: Yes")
 
 
 if __name__ == "__main__":
