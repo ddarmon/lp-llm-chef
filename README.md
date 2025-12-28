@@ -42,6 +42,11 @@ from natural language goals.
     quantities. Produces realistic meals with different foods at each meal.
 -   **Food categories**: Classify foods by macro dominance (protein, carb,
     fat, vegetable, legume)
+-   **Weight tracking**: Hacker's Diet-style exponentially smoothed moving
+    average (EMA) for trend tracking that filters out daily noise
+-   **Adaptive TDEE learning**: Kalman filter learns your personalized TDEE
+    from weight observations over time, improving on generic Mifflin-St Jeor
+    estimates
 
 ## Installation
 
@@ -299,60 +304,46 @@ This ensures optimization only suggests foods you actually buy and cook with.
 
 ## Commands Reference
 
-  ----------------------------------------------------------------------------
-  Command                            Description
-  ---------------------------------- -----------------------------------------
-  `uv run mealplan init <path>`             Initialize database from USDA CSV
-                                     directory
+All commands should be prefixed with `uv run` when using `uv` as the project manager.
 
-  `uv run mealplan search <query>`          Search foods (shows price/tags)
-
-  `uv run mealplan info <fdc_id>`           Show nutrients for a food
-
-  `uv run mealplan optimize`                Run optimization
-
-  `uv run mealplan optimize --template`     Template-based (realistic meals)
-
-  `uv run mealplan optimize --multiperiod`  Multi-period mode (per-meal constraints)
-
-  `uv run mealplan optimize --verbose`      Show KKT optimality conditions
-
-  `uv run mealplan export-for-llm <id>`     Generate LLM prompt (use `latest` for
-                                     last run)
-
-  `uv run mealplan history`                 Show past optimization runs
-
-  `uv run mealplan prices add`              Add/update a food price
-
-  `uv run mealplan prices import`           Import prices from CSV
-
-  `uv run mealplan prices list`             List priced foods
-
-  `uv run mealplan prices list --missing`   List foods without prices
-
-  `uv run mealplan tags add`                Add tag to food
-
-  `uv run mealplan tags remove`             Remove tag from food
-
-  `uv run mealplan tags list`               List all tags or foods with tag
-
-  `uv run mealplan tags interactive`        Interactive mode to search/tag
-
-  `uv run mealplan profile create`          Create profile from YAML
-
-  `uv run mealplan profile wizard`          Interactive profile creator
-
-  `uv run mealplan profile list`            List saved profiles
-
-  `uv run mealplan profile show`            Show profile details
-  ----------------------------------------------------------------------------
+| Command | Description |
+|--------|-------------|
+| `mealplan init <path>` | Initialize database from USDA CSV directory |
+| `mealplan search <query>` | Search foods (shows price/tags) |
+| `mealplan info <fdc_id>` | Show nutrients for a food |
+| `mealplan optimize` | Run optimization |
+| `mealplan optimize --template` | Template-based (realistic meals) |
+| `mealplan optimize --multiperiod` | Multi-period mode (per-meal constraints) |
+| `mealplan optimize --verbose` | Show KKT optimality conditions |
+| `mealplan export-for-llm <id>` | Generate LLM prompt (use `latest` for last run) |
+| `mealplan history` | Show past optimization runs |
+| `mealplan prices add` | Add/update a food price |
+| `mealplan prices import` | Import prices from CSV |
+| `mealplan prices list` | List priced foods |
+| `mealplan prices list --missing` | List foods without prices |
+| `mealplan tags add` | Add tag to food |
+| `mealplan tags remove` | Remove tag from food |
+| `mealplan tags list` | List all tags or foods with tag |
+| `mealplan tags interactive` | Interactive mode to search/tag |
+| `mealplan profile create` | Create profile from YAML |
+| `mealplan profile wizard` | Interactive profile creator |
+| `mealplan profile list` | List saved profiles |
+| `mealplan profile show` | Show profile details |
+| `mealplan user create` | Create user profile (age, sex, height, activity level) |
+| `mealplan user show` | Show current user profile |
+| `mealplan weight add <lbs>` | Log today's weight (computes EMA trend automatically) |
+| `mealplan weight list` | Show weight history with trends |
+| `mealplan calories log <kcal>` | Log planned calorie intake |
+| `mealplan tdee estimate` | Run Kalman filter to estimate personalized TDEE |
+| `mealplan tdee progress` | Show weight/TDEE progress report |
 
 ## Advanced LLM Features
 
 These features are designed for LLM agents doing iterative diet optimization.
 
 **Claude Code users**: This project includes slash commands (`/mealplan`, `/template`,
-`/multiperiod`, `/recipes`) for interactive meal planning. See `.claude/skills/` for details.
+`/multiperiod`, `/recipes`, `/tracking`) for interactive meal planning and weight tracking.
+See `.claude/skills/` for details.
 
 ### Meta-Optimization
 
