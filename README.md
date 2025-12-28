@@ -37,6 +37,9 @@ from natural language goals.
 -   **Multi-period optimization**: Per-meal calorie/nutrient constraints
     enforced at optimization time (not post-hoc). Includes equi-calorie
     constraints and food-meal affinity rules.
+-   **Template-based meal composition** (`--template`): Human-like meal planning
+    that selects one protein + one legume + vegetables per meal, then optimizes
+    quantities. Produces realistic meals with different foods at each meal.
 -   **Food categories**: Classify foods by macro dominance (protein, carb,
     fat, vegetable, legume)
 
@@ -308,6 +311,8 @@ This ensures optimization only suggests foods you actually buy and cook with.
 
   `uv run mealplan optimize`                Run optimization
 
+  `uv run mealplan optimize --template`     Template-based (realistic meals)
+
   `uv run mealplan optimize --multiperiod`  Multi-period mode (per-meal constraints)
 
   `uv run mealplan optimize --verbose`      Show KKT optimality conditions
@@ -344,7 +349,10 @@ This ensures optimization only suggests foods you actually buy and cook with.
 
 ## Advanced LLM Features
 
-These features are designed for LLM agents doing iterative diet optimization:
+These features are designed for LLM agents doing iterative diet optimization.
+
+**Claude Code users**: This project includes slash commands (`/mealplan`, `/template`,
+`/multiperiod`, `/recipes`) for interactive meal planning. See `.claude/skills/` for details.
 
 ### Meta-Optimization
 
@@ -372,9 +380,31 @@ uv run mealplan optimize --allocate-meals --json
 This uses keyword heuristics (eggs→breakfast, fish→lunch/dinner, nuts→snack)
 to distribute the optimization result into meal slots.
 
+### Template-Based Meal Composition (Recommended)
+
+For realistic meals that look like what humans actually eat:
+
+``` bash
+# Template-based optimization (recommended)
+uv run mealplan optimize --pattern pescatarian --pattern slow_carb --template
+
+# With reproducible random seed
+uv run mealplan optimize --pattern pescatarian --template --seed 42
+
+# Available patterns: pescatarian, vegetarian, vegan, keto, mediterranean, paleo, slow_carb
+```
+
+This produces meals with proper structure:
+- **Breakfast**: Eggs 150g, Edamame 100g, Kale 100g
+- **Lunch**: Cod 235g, Kidney beans 216g, Zucchini 161g
+- **Dinner**: Salmon 170g, Lentils 113g, Carrots 149g
+- **Snack**: Peanuts 30g
+
+Instead of the Stigler-style output (all vegetables, identical meals).
+
 ### Multi-Period Optimization (Per-Meal Constraints)
 
-For proper per-meal constraints enforced at optimization time:
+For per-meal constraints enforced at optimization time (Stigler-style QP):
 
 ``` bash
 # Auto-derive meal targets (25% breakfast, 35% lunch, 35% dinner, 5% snack)
@@ -530,6 +560,23 @@ Requires prices to be set for foods.
 
 This enforces meal structure at optimization time, avoiding post-hoc
 allocation issues.
+
+### Template-Based Mode (`--template`)
+
+A fundamentally different approach that mirrors human meal planning:
+
+**Phase 1 - Selection (Discrete)**:
+- For each meal, select one food per slot (protein, legume, vegetables)
+- Enforce diversity: once a food is selected, exclude it from future meals
+- Selection strategy: random with optional seed for reproducibility
+
+**Phase 2 - Optimization (Continuous)**:
+- Run small QP (~16-20 variables) with only selected foods
+- Use slot-specific target portions (protein=175g, legume=125g, vegetables=100g)
+- Much simpler optimization that naturally produces reasonable portions
+
+This avoids the Stigler-style problem where the optimizer spreads across
+many foods because that minimizes deviation from the uniform 100g target.
 
 ## Configuration
 
