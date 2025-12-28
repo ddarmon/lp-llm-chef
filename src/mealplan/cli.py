@@ -46,6 +46,17 @@ app.add_typer(explore_app, name="explore")
 patterns_app = typer.Typer(help="Manage dietary patterns")
 app.add_typer(patterns_app, name="patterns")
 
+# Weight tracking subcommands
+user_app = typer.Typer(help="Manage user profile for weight tracking")
+weight_app = typer.Typer(help="Log and track weight with EMA trend")
+calories_app = typer.Typer(help="Log planned calorie intake")
+tdee_app = typer.Typer(help="TDEE estimation and adaptive targets")
+
+app.add_typer(user_app, name="user")
+app.add_typer(weight_app, name="weight")
+app.add_typer(calories_app, name="calories")
+app.add_typer(tdee_app, name="tdee")
+
 
 # ============================================================================
 # Helper for JSON output
@@ -59,6 +70,79 @@ def output_json(response: dict, file=None) -> None:
         file.write(json_str)
     else:
         print(json_str)
+
+
+def ensure_tracking_tables() -> None:
+    """Ensure tracking tables exist (idempotent)."""
+    db = get_db()
+    db.initialize_schema()
+
+
+def require_food_data() -> None:
+    """Check that database has been initialized with food data.
+
+    Raises typer.Exit(1) with a friendly message if no food data exists.
+    """
+    db = get_db()
+    try:
+        has_foods = db.table_exists("foods") and db.get_table_count("foods") > 0
+    except Exception:
+        has_foods = False
+
+    if not has_foods:
+        console.print("[red]Database not initialized with food data.[/red]")
+        console.print("Run: [cyan]mealplan init <path-to-usda-csv>[/cyan]")
+        raise typer.Exit(1)
+
+
+# Callbacks for tracking sub-apps to auto-create tables on first use
+@user_app.callback()
+def user_callback() -> None:
+    """Ensure tracking tables exist before any user command."""
+    ensure_tracking_tables()
+
+
+@weight_app.callback()
+def weight_callback() -> None:
+    """Ensure tracking tables exist before any weight command."""
+    ensure_tracking_tables()
+
+
+@calories_app.callback()
+def calories_callback() -> None:
+    """Ensure tracking tables exist before any calories command."""
+    ensure_tracking_tables()
+
+
+@tdee_app.callback()
+def tdee_callback() -> None:
+    """Ensure tracking tables exist before any tdee command."""
+    ensure_tracking_tables()
+
+
+# Callbacks for sub-apps that require food data
+@prices_app.callback()
+def prices_callback() -> None:
+    """Ensure food data exists before any prices command."""
+    require_food_data()
+
+
+@tags_app.callback()
+def tags_callback() -> None:
+    """Ensure food data exists before any tags command."""
+    require_food_data()
+
+
+@explore_app.callback()
+def explore_callback() -> None:
+    """Ensure food data exists before any explore command."""
+    require_food_data()
+
+
+@patterns_app.callback()
+def patterns_callback() -> None:
+    """Ensure food data exists before any patterns command."""
+    require_food_data()
 
 
 # ============================================================================
@@ -147,6 +231,7 @@ def search(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Search for foods by description."""
+    require_food_data()
     db = get_db()
     with db.get_connection() as conn:
         results = FoodQueries.search_foods(conn, query, limit)
@@ -205,6 +290,7 @@ def info(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show detailed nutrient information for a food."""
+    require_food_data()
     db = get_db()
     with db.get_connection() as conn:
         food = FoodQueries.get_food_by_id(conn, fdc_id)
@@ -342,6 +428,8 @@ def optimize(
     ),
 ) -> None:
     """Run meal plan optimization."""
+    require_food_data()
+
     from mealplan.agent.response import create_response
     from mealplan.export.formatters import format_result
     from mealplan.explore.diagnosis import diagnose_infeasibility
@@ -1184,6 +1272,8 @@ def optimize_batch_cmd(
         ]
     }
     """
+    require_food_data()
+
     import json as json_module
 
     from mealplan.optimizer.batch import (
@@ -1304,6 +1394,8 @@ def export_for_llm(
     days: int = typer.Option(1, "--days", "-d", help="Number of days for meal plan"),
 ) -> None:
     """Export optimization result as LLM-ready prompt."""
+    require_food_data()
+
     from mealplan.export.llm_prompt import LLMPromptGenerator
     from mealplan.optimizer.models import FoodResult, NutrientResult, OptimizationResult
 
@@ -1406,6 +1498,7 @@ def history(
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show optimization run history."""
+    require_food_data()
     db = get_db()
     with db.get_connection() as conn:
         runs = OptimizationRunQueries.list_runs(conn, limit)
@@ -2822,6 +2915,854 @@ def patterns_info(
             console.print(f"  Sample excludes: {', '.join(pattern.exclude_keywords[:10])}")
         if pattern.macro_targets:
             console.print(f"  Has macro targets: Yes")
+
+
+# ============================================================================
+# User Profile Commands
+# ============================================================================
+
+
+@user_app.command("create")
+def user_create(
+    age: int = typer.Option(..., "--age", help="Age in years"),
+    sex: str = typer.Option(..., "--sex", help="Sex (male/female)"),
+    height: float = typer.Option(..., "--height", help="Height in inches"),
+    weight: float = typer.Option(..., "--weight", help="Current weight in lbs"),
+    activity: str = typer.Option(
+        "moderate",
+        "--activity",
+        help="Activity level (sedentary/lightly_active/moderate/active/very_active)",
+    ),
+    goal: Optional[str] = typer.Option(
+        None, "--goal", help="Goal (e.g., 'fat_loss:185:165')"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Create a user profile for weight tracking."""
+    from mealplan.tracking.models import UserProfile
+    from mealplan.tracking.queries import UserQueries
+
+    db = get_db()
+
+    # Parse goal if provided
+    target_weight = None
+    if goal and ":" in goal:
+        parts = goal.split(":")
+        if len(parts) >= 3:
+            try:
+                target_weight = float(parts[2])
+            except ValueError:
+                pass
+
+    profile = UserProfile(
+        user_id=None,
+        age=age,
+        sex=sex,
+        height_inches=height,
+        weight_lbs=weight,
+        activity_level=activity,
+        goal=goal,
+        target_weight_lbs=target_weight,
+    )
+
+    with db.get_connection() as conn:
+        user_id = UserQueries.create_user(conn, profile)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "user create",
+            "data": {"user_id": user_id, "profile": {
+                "age": age, "sex": sex, "height_inches": height,
+                "weight_lbs": weight, "activity_level": activity,
+                "goal": goal, "target_weight_lbs": target_weight,
+            }},
+            "human_summary": f"Created user profile (ID: {user_id})",
+        })
+    else:
+        console.print(f"[green]Created user profile (ID: {user_id})[/green]")
+
+
+@user_app.command("show")
+def user_show(
+    user_id: Optional[int] = typer.Option(None, "--id", help="User ID (default: first user)"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Show user profile."""
+    from mealplan.tracking.queries import UserQueries
+
+    db = get_db()
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+    if profile is None:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "user show",
+                "errors": ["No user profile found"],
+                "suggestions": ["Create a profile with: mealplan user create --age 35 --sex male --height 70 --weight 180"],
+            })
+        else:
+            console.print("[red]No user profile found[/red]")
+            console.print("Create one with: mealplan user create --age 35 --sex male --height 70 --weight 180")
+        raise typer.Exit(1)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "user show",
+            "data": {
+                "user_id": profile.user_id,
+                "age": profile.age,
+                "sex": profile.sex,
+                "height_inches": profile.height_inches,
+                "weight_lbs": profile.weight_lbs,
+                "activity_level": profile.activity_level,
+                "goal": profile.goal,
+                "target_weight_lbs": profile.target_weight_lbs,
+            },
+            "human_summary": f"User {profile.user_id}: {profile.sex}, {profile.age}y, {profile.height_inches}in, {profile.weight_lbs}lbs",
+        })
+    else:
+        console.print(f"[bold]User Profile (ID: {profile.user_id})[/bold]")
+        console.print(f"  Age: {profile.age}")
+        console.print(f"  Sex: {profile.sex}")
+        console.print(f"  Height: {profile.height_inches} inches")
+        console.print(f"  Weight: {profile.weight_lbs} lbs")
+        console.print(f"  Activity: {profile.activity_level}")
+        if profile.goal:
+            console.print(f"  Goal: {profile.goal}")
+        if profile.target_weight_lbs:
+            console.print(f"  Target weight: {profile.target_weight_lbs} lbs")
+
+
+@user_app.command("update")
+def user_update(
+    user_id: Optional[int] = typer.Option(None, "--id", help="User ID (default: first user)"),
+    weight: Optional[float] = typer.Option(None, "--weight", help="Update current weight"),
+    goal: Optional[str] = typer.Option(None, "--goal", help="Update goal"),
+    activity: Optional[str] = typer.Option(None, "--activity", help="Update activity level"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Update user profile."""
+    from mealplan.tracking.queries import UserQueries
+
+    db = get_db()
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "user update",
+                    "errors": ["No user profile found"],
+                })
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        # Update fields
+        if weight is not None:
+            profile.weight_lbs = weight
+        if activity is not None:
+            profile.activity_level = activity
+        if goal is not None:
+            profile.goal = goal
+            # Parse target weight from goal
+            if ":" in goal:
+                parts = goal.split(":")
+                if len(parts) >= 3:
+                    try:
+                        profile.target_weight_lbs = float(parts[2])
+                    except ValueError:
+                        pass
+
+        UserQueries.update_user(conn, profile)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "user update",
+            "data": {"user_id": profile.user_id},
+            "human_summary": "Profile updated",
+        })
+    else:
+        console.print("[green]Profile updated[/green]")
+
+
+# ============================================================================
+# Weight Tracking Commands
+# ============================================================================
+
+
+@weight_app.command("add")
+def weight_add(
+    weight: float = typer.Argument(..., help="Weight in lbs"),
+    date_str: Optional[str] = typer.Option(
+        None, "--date", "-d", help="Date (YYYY-MM-DD, default: today)"
+    ),
+    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Optional notes"),
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID (default: first user)"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Add a weight entry (EMA trend computed automatically)."""
+    from datetime import date, datetime
+
+    from mealplan.tracking.queries import UserQueries, WeightQueries
+
+    db = get_db()
+
+    # Parse date
+    if date_str:
+        measured_at = date.fromisoformat(date_str)
+    else:
+        measured_at = date.today()
+
+    with db.get_connection() as conn:
+        # Get user
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "weight add",
+                    "errors": ["No user profile found"],
+                    "suggestions": ["Create a profile first: mealplan user create ..."],
+                })
+            else:
+                console.print("[red]No user profile found. Create one first.[/red]")
+            raise typer.Exit(1)
+
+        entry = WeightQueries.add_weight(
+            conn, profile.user_id, weight, measured_at, notes  # type: ignore
+        )
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "weight add",
+            "data": {
+                "weight_lbs": entry.weight_lbs,
+                "trend_lbs": round(entry.trend_lbs, 1),
+                "measured_at": entry.measured_at.isoformat(),
+            },
+            "human_summary": f"Logged {weight:.1f} lbs, trend: {entry.trend_lbs:.1f} lbs",
+        })
+    else:
+        console.print(f"[green]Logged:[/green] {weight:.1f} lbs on {measured_at}")
+        console.print(f"[blue]Trend:[/blue] {entry.trend_lbs:.1f} lbs (EMA)")
+
+
+@weight_app.command("list")
+def weight_list(
+    days: int = typer.Option(30, "--days", "-d", help="Number of days to show"),
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """List weight history with trends."""
+    from mealplan.tracking.queries import UserQueries, WeightQueries
+
+    db = get_db()
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({"success": False, "errors": ["No user profile found"]})
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        history = WeightQueries.get_weight_history(conn, profile.user_id, days=days)  # type: ignore
+
+    if not history:
+        if json_output:
+            output_json({"success": True, "data": {"entries": []}, "human_summary": "No weight entries found"})
+        else:
+            console.print("No weight entries found")
+        return
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "weight list",
+            "data": {
+                "entries": [
+                    {
+                        "date": e.measured_at.isoformat(),
+                        "weight_lbs": e.weight_lbs,
+                        "trend_lbs": round(e.trend_lbs, 1),
+                    }
+                    for e in history
+                ]
+            },
+            "human_summary": f"{len(history)} entries over {days} days",
+        })
+    else:
+        table = Table(title=f"Weight History (last {days} days)")
+        table.add_column("Date", style="cyan")
+        table.add_column("Weight", justify="right")
+        table.add_column("Trend", justify="right", style="blue")
+        table.add_column("Δ", justify="right")
+
+        prev_trend = None
+        for entry in history:
+            delta = ""
+            if prev_trend is not None:
+                d = entry.trend_lbs - prev_trend
+                delta = f"{d:+.1f}"
+            prev_trend = entry.trend_lbs
+
+            table.add_row(
+                entry.measured_at.isoformat(),
+                f"{entry.weight_lbs:.1f}",
+                f"{entry.trend_lbs:.1f}",
+                delta,
+            )
+
+        console.print(table)
+
+
+@weight_app.command("trend")
+def weight_trend(
+    days: int = typer.Option(30, "--days", "-d", help="Days to analyze"),
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Show weight trend analysis."""
+    from mealplan.tracking.diagnostics import format_weight_report, generate_weight_report
+    from mealplan.tracking.queries import UserQueries
+
+    db = get_db()
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({"success": False, "errors": ["No user profile found"]})
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        report = generate_weight_report(conn, profile.user_id, days=days)  # type: ignore
+
+    if report is None:
+        if json_output:
+            output_json({"success": False, "errors": ["Not enough data for trend analysis"]})
+        else:
+            console.print("[yellow]Not enough data for trend analysis[/yellow]")
+        raise typer.Exit(1)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "weight trend",
+            "data": {
+                "current_weight_lbs": report.current_weight,
+                "current_trend_lbs": round(report.current_trend, 1),
+                "trend_change_lbs": round(report.trend_change, 1),
+                "weekly_rate_lbs": round(report.weekly_rate, 2),
+                "implied_daily_deficit_kcal": round(report.implied_daily_deficit, 0),
+                "period_days": report.period_days,
+            },
+            "human_summary": f"Trend: {report.current_trend:.1f} lbs, {report.weekly_rate:+.1f} lbs/week",
+        })
+    else:
+        console.print(format_weight_report(report))
+
+
+# ============================================================================
+# Calorie Logging Commands
+# ============================================================================
+
+
+@calories_app.command("log")
+def calories_log(
+    calories: float = typer.Argument(..., help="Planned calories"),
+    date_str: Optional[str] = typer.Option(
+        None, "--date", "-d", help="Date (YYYY-MM-DD, default: today)"
+    ),
+    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Optional notes"),
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Log planned calorie intake for a day."""
+    from datetime import date
+
+    from mealplan.tracking.queries import CalorieQueries, UserQueries
+
+    db = get_db()
+
+    if date_str:
+        log_date = date.fromisoformat(date_str)
+    else:
+        log_date = date.today()
+
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({"success": False, "errors": ["No user profile found"]})
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        entry = CalorieQueries.log_calories(
+            conn, profile.user_id, log_date, calories, notes  # type: ignore
+        )
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "calories log",
+            "data": {
+                "date": entry.date.isoformat(),
+                "planned_calories": entry.planned_calories,
+            },
+            "human_summary": f"Logged {calories:.0f} kcal for {log_date}",
+        })
+    else:
+        console.print(f"[green]Logged:[/green] {calories:.0f} kcal for {log_date}")
+
+
+@calories_app.command("list")
+def calories_list(
+    days: int = typer.Option(30, "--days", "-d", help="Days to show"),
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """List calorie log history."""
+    from datetime import date, timedelta
+
+    from mealplan.tracking.queries import CalorieQueries, UserQueries
+
+    db = get_db()
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({"success": False, "errors": ["No user profile found"]})
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        history = CalorieQueries.get_calorie_history(
+            conn, profile.user_id, start_date, end_date  # type: ignore
+        )
+
+    if not history:
+        if json_output:
+            output_json({"success": True, "data": {"entries": []}, "human_summary": "No calorie entries"})
+        else:
+            console.print("No calorie entries found")
+        return
+
+    if json_output:
+        avg = sum(e.planned_calories for e in history) / len(history)
+        output_json({
+            "success": True,
+            "command": "calories list",
+            "data": {
+                "entries": [
+                    {"date": e.date.isoformat(), "planned_calories": e.planned_calories}
+                    for e in history
+                ],
+                "average_calories": round(avg, 0),
+            },
+            "human_summary": f"{len(history)} entries, avg {avg:.0f} kcal/day",
+        })
+    else:
+        table = Table(title=f"Calorie Log (last {days} days)")
+        table.add_column("Date", style="cyan")
+        table.add_column("Planned Calories", justify="right")
+
+        for entry in history:
+            table.add_row(entry.date.isoformat(), f"{entry.planned_calories:.0f}")
+
+        console.print(table)
+
+        avg = sum(e.planned_calories for e in history) / len(history)
+        console.print(f"\nAverage: {avg:.0f} kcal/day")
+
+
+# ============================================================================
+# TDEE Estimation Commands
+# ============================================================================
+
+
+@tdee_app.command("estimate")
+def tdee_estimate(
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Run TDEE estimation using Kalman filter on weight/calorie data."""
+    from datetime import date, timedelta
+
+    from mealplan.tracking.diagnostics import calculate_mifflin_tdee
+    from mealplan.tracking.models import TDEEEstimate
+    from mealplan.tracking.queries import (
+        CalorieQueries,
+        TDEEQueries,
+        UserQueries,
+        WeightQueries,
+    )
+    from mealplan.tracking.tdee_filter import TDEEFilter
+
+    db = get_db()
+
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({"success": False, "errors": ["No user profile found"]})
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        uid = profile.user_id  # type: ignore
+
+        # Get weight history (last 8 weeks for weekly updates)
+        end_date = date.today()
+        start_date = end_date - timedelta(days=56)
+        weight_history = WeightQueries.get_weight_history(
+            conn, uid, start_date=start_date, end_date=end_date
+        )
+
+        if len(weight_history) < 7:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "errors": ["Not enough weight data (need at least 1 week)"],
+                    "suggestions": ["Log your weight daily with: mealplan weight add <weight>"],
+                })
+            else:
+                console.print("[yellow]Not enough weight data. Need at least 1 week.[/yellow]")
+            raise typer.Exit(1)
+
+        # Calculate Mifflin-St Jeor TDEE
+        mifflin_tdee = calculate_mifflin_tdee(profile)
+
+        # Always start fresh - recalculating from the 8-week history is cheap
+        # and avoids compounding bias if tdee estimate is run multiple times
+        tdee_filter = TDEEFilter()
+
+        # Run filter on weekly data
+        # Group weight data by week and compute trend changes
+        weeks_processed = 0
+        for week_start in range(0, len(weight_history) - 7, 7):
+            week_entries = weight_history[week_start : week_start + 7]
+            if len(week_entries) < 2:
+                continue
+
+            trend_start = week_entries[0].trend_lbs
+            trend_end = week_entries[-1].trend_lbs
+
+            # Get average calories for this week
+            week_start_date = week_entries[0].measured_at
+            week_end_date = week_entries[-1].measured_at
+            avg_calories = CalorieQueries.get_average_calories(
+                conn, uid, week_start_date, week_end_date
+            )
+
+            if avg_calories is None:
+                continue  # Skip weeks without calorie data
+
+            # Implied deficit from trend change
+            implied_deficit = (trend_start - trend_end) * 3500 / 7
+
+            # Expected deficit from plan
+            expected_deficit = mifflin_tdee - avg_calories
+
+            # Update filter
+            tdee_filter.predict_and_update(implied_deficit, expected_deficit, days=7)
+            weeks_processed += 1
+
+        # Save estimate
+        adjusted_tdee, uncertainty = tdee_filter.get_adjusted_tdee(mifflin_tdee)
+        estimate = TDEEEstimate(
+            estimate_id=None,
+            user_id=uid,
+            estimated_at=end_date,
+            mifflin_tdee=mifflin_tdee,
+            tdee_bias=tdee_filter.bias,
+            variance=tdee_filter.variance,
+            adjusted_tdee=adjusted_tdee,
+        )
+        TDEEQueries.save_estimate(conn, estimate)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "tdee estimate",
+            "data": {
+                "mifflin_tdee": round(mifflin_tdee, 0),
+                "tdee_bias": round(tdee_filter.bias, 0),
+                "adjusted_tdee": round(adjusted_tdee, 0),
+                "uncertainty_95ci": round(uncertainty, 0),
+                "weeks_processed": weeks_processed,
+            },
+            "human_summary": f"TDEE: {adjusted_tdee:.0f} ± {uncertainty:.0f} kcal/day (bias: {tdee_filter.bias:+.0f})",
+        })
+    else:
+        console.print(f"[green]Updated Total Daily Energy Expenditure (TDEE) estimate[/green] ({weeks_processed} weeks processed)")
+        console.print(f"  Mifflin-St Jeor baseline: {mifflin_tdee:.0f} kcal/day")
+        console.print(f"  Learned bias: {tdee_filter.bias:+.0f} kcal/day")
+        console.print(f"  [bold]Your TDEE: {adjusted_tdee:.0f} ± {uncertainty:.0f} kcal/day[/bold]")
+        console.print()
+        console.print("[dim]Run 'mealplan tdee progress' for full report[/dim]")
+
+
+@tdee_app.command("targets")
+def tdee_targets(
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Get adaptive calorie/macro targets based on current progress."""
+    from datetime import date, timedelta
+
+    from mealplan.tracking.diagnostics import calculate_mifflin_tdee, generate_weight_report
+    from mealplan.tracking.queries import CalorieQueries, TDEEQueries, UserQueries
+
+    db = get_db()
+
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({"success": False, "errors": ["No user profile found"]})
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        uid = profile.user_id  # type: ignore
+        latest_estimate = TDEEQueries.get_latest_estimate(conn, uid)
+
+        # Get current intake and weight loss rate
+        end_date = date.today()
+        start_date = end_date - timedelta(days=30)
+        avg_intake = CalorieQueries.get_average_calories(conn, uid, start_date, end_date)
+        weight_report = generate_weight_report(conn, uid, days=30)
+
+    # Use estimate if available, otherwise Mifflin-St Jeor
+    if latest_estimate:
+        tdee = latest_estimate.adjusted_tdee
+        uncertainty = latest_estimate.uncertainty_95ci
+    else:
+        tdee = calculate_mifflin_tdee(profile)
+        uncertainty = 100  # Default uncertainty for no data
+
+    # Determine target rate based on goal
+    goal = profile.goal
+    if goal and goal.startswith("fat_loss"):
+        target_rate = -1.0  # 1 lb/week loss
+        goal_desc = "fat loss (1 lb/week)"
+    elif goal and goal.startswith("aggressive"):
+        target_rate = -1.5  # 1.5 lb/week loss
+        goal_desc = "aggressive fat loss (1.5 lb/week)"
+    elif goal and goal.startswith("lean_gain"):
+        target_rate = 0.5  # 0.5 lb/week gain
+        goal_desc = "lean gain (0.5 lb/week)"
+    elif goal and goal.startswith("muscle_gain"):
+        target_rate = 1.0  # 1 lb/week gain
+        goal_desc = "muscle gain (1 lb/week)"
+    else:
+        target_rate = 0.0
+        goal_desc = "maintenance"
+
+    # Current situation
+    current_rate = weight_report.weekly_rate if weight_report else 0.0
+    current_intake = avg_intake if avg_intake else tdee  # Assume maintenance if no data
+
+    # Calculate what intake would achieve target rate
+    # target_rate (lbs/week) * 500 = daily calorie change needed
+    target_deficit = -target_rate * 500  # positive = deficit, negative = surplus
+    target_calories = tdee - target_deficit
+
+    # Protein: 0.8-1.0 g/lb for fat loss, 0.7-0.8 for maintenance
+    weight = profile.weight_lbs
+    if target_rate < 0:  # Cutting
+        protein_min = int(weight * 0.8)
+        protein_max = int(weight * 1.0)
+    else:
+        protein_min = int(weight * 0.7)
+        protein_max = int(weight * 0.9)
+
+    # Generate recommendation based on current progress
+    recommendation = None
+    recommended_intake = target_calories  # Default to theoretical target
+
+    if weight_report and avg_intake:
+        rate_diff = current_rate - target_rate
+        if abs(rate_diff) < 0.2:
+            # On track - keep current intake
+            recommendation = "You're on track! Keep doing what you're doing."
+            recommended_intake = current_intake
+        elif target_rate < 0:  # Trying to lose
+            if current_rate > target_rate + 0.2:  # Not losing fast enough (rate is less negative)
+                cal_adjust = int((current_rate - target_rate) * 500)
+                recommended_intake = current_intake - cal_adjust
+                recommendation = f"Losing slower than target. Consider reducing intake by ~{cal_adjust} kcal/day."
+            elif current_rate < target_rate - 0.2:  # Losing too fast (rate is more negative)
+                cal_adjust = int((target_rate - current_rate) * 500)
+                recommended_intake = current_intake + abs(cal_adjust)
+                recommendation = f"Losing faster than target ({abs(current_rate):.1f} lb/week). Consider increasing intake by ~{abs(cal_adjust)} kcal/day to preserve muscle."
+        elif target_rate > 0:  # Trying to gain
+            if current_rate < target_rate - 0.2:  # Not gaining fast enough
+                cal_adjust = int((target_rate - current_rate) * 500)
+                recommended_intake = current_intake + cal_adjust
+                recommendation = f"Gaining slower than target. Consider increasing intake by ~{cal_adjust} kcal/day."
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "tdee targets",
+            "data": {
+                "tdee": round(tdee, 0),
+                "tdee_uncertainty": round(uncertainty, 0),
+                "goal": goal_desc,
+                "target_rate_lbs_week": target_rate,
+                "current_rate_lbs_week": round(current_rate, 2) if weight_report else None,
+                "current_intake": round(current_intake, 0) if avg_intake else None,
+                "recommended_intake": round(recommended_intake, 0),
+                "protein_min": protein_min,
+                "protein_max": protein_max,
+                "recommendation": recommendation,
+            },
+            "human_summary": recommendation or f"Target: {recommended_intake:.0f} kcal/day for {goal_desc}",
+        })
+    else:
+        console.print("[bold]Adaptive Calorie Targets[/bold]")
+        console.print(f"  Estimated TDEE: {tdee:.0f} ± {uncertainty:.0f} kcal/day")
+        console.print(f"  Goal: {goal_desc}")
+        console.print()
+
+        if weight_report and avg_intake:
+            console.print("[bold]Current status:[/bold]")
+            console.print(f"  Average intake: {current_intake:.0f} kcal/day")
+            rate_dir = "losing" if current_rate < 0 else "gaining" if current_rate > 0 else "maintaining"
+            console.print(f"  Current rate: {abs(current_rate):.1f} lbs/week ({rate_dir})")
+            console.print()
+
+        console.print("[bold]Recommendation:[/bold]")
+        console.print(f"  [green]Calorie target:[/green] {recommended_intake:.0f} kcal/day")
+        console.print(f"  [green]Protein range:[/green] {protein_min} - {protein_max} g/day")
+
+        if recommendation:
+            console.print()
+            console.print(f"  [cyan]{recommendation}[/cyan]")
+
+
+@tdee_app.command("progress")
+def tdee_progress(
+    days: int = typer.Option(30, "--days", "-d", help="Number of days to analyze"),
+    user_id: Optional[int] = typer.Option(None, "--user", help="User ID"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Show comprehensive weight loss progress report."""
+    from mealplan.tracking.diagnostics import (
+        format_progress_report,
+        generate_progress_report,
+    )
+    from mealplan.tracking.queries import UserQueries
+
+    db = get_db()
+
+    with db.get_connection() as conn:
+        if user_id:
+            profile = UserQueries.get_user(conn, user_id)
+        else:
+            profile = UserQueries.get_default_user(conn)
+
+        if profile is None:
+            if json_output:
+                output_json({"success": False, "errors": ["No user profile found"]})
+            else:
+                console.print("[red]No user profile found[/red]")
+            raise typer.Exit(1)
+
+        uid = profile.user_id  # type: ignore
+        report = generate_progress_report(conn, uid, days)
+
+    if report is None:
+        if json_output:
+            output_json({
+                "success": False,
+                "errors": ["Not enough weight data for progress report"],
+                "suggestions": ["Log at least 2 weight entries with: mealplan weight add <weight>"],
+            })
+        else:
+            console.print("[yellow]Not enough weight data for progress report[/yellow]")
+            console.print("Log weight with: mealplan weight add <weight>")
+        raise typer.Exit(1)
+
+    if json_output:
+        output_json({
+            "success": True,
+            "command": "tdee progress",
+            "data": {
+                "weight": {
+                    "current_weight": report.weight.current_weight,
+                    "current_trend": report.weight.current_trend,
+                    "trend_change": report.weight.trend_change,
+                    "weekly_rate": report.weight.weekly_rate,
+                    "implied_daily_deficit": report.weight.implied_daily_deficit,
+                    "period_days": report.weight.period_days,
+                },
+                "tdee": {
+                    "mifflin_tdee": report.tdee.mifflin_tdee,
+                    "tdee_bias": report.tdee.tdee_bias,
+                    "adjusted_tdee": report.tdee.adjusted_tdee,
+                    "uncertainty_95ci": report.tdee.uncertainty_95ci,
+                    "avg_planned_calories": report.tdee.avg_planned_calories,
+                    "expected_deficit": report.tdee.expected_deficit,
+                    "implied_deficit": report.tdee.implied_deficit,
+                } if report.tdee else None,
+                "goal_weight": report.goal_weight,
+                "remaining_lbs": report.remaining_lbs,
+                "weeks_to_goal": report.weeks_to_goal,
+                "notes": report.notes,
+            },
+            "human_summary": f"Lost {abs(report.weight.trend_change):.1f} lbs over {report.weight.period_days} days ({abs(report.weight.weekly_rate):.1f} lbs/week)",
+        })
+    else:
+        console.print(format_progress_report(report))
 
 
 if __name__ == "__main__":
