@@ -25,6 +25,10 @@ Codex CLI, and other LLM agents for iterative diet planning.
     with variables `x_{i,m}` (grams of food i in meal m). Enforces per-meal
     calorie/nutrient constraints at optimization time, fixing issues like
     995-calorie snacks from post-hoc allocation.
+-   **Template-based mode** (`--template`): Recommended for realistic meals.
+    Uses human-like meal planning: select one protein + one legume + vegetables
+    per meal, then optimize quantities. Produces different foods at each meal
+    instead of spreading across many foods like Stigler-style optimization.
 
 ## Development Commands
 
@@ -118,6 +122,13 @@ uv run mealplan optimize --multiperiod --json          # Auto-derive meal target
 uv run mealplan optimize --file meals.yaml --json      # Use profile with meals: section
 ```
 
+Template-based optimization (recommended for realistic meals):
+``` bash
+uv run mealplan optimize --pattern pescatarian --template --json       # Template-based
+uv run mealplan optimize --pattern pescatarian --template --seed 42    # Reproducible
+# Patterns: pescatarian, vegetarian, vegan, keto, mediterranean, paleo, slow_carb
+```
+
 JSON output (add `--json` to any command):
 ``` bash
 uv run mealplan search chicken --json      # Structured search results
@@ -207,10 +218,24 @@ uv run mealplan info 170567 --json         # Nutrient data as JSON
         vegetable/legume/fruit) using calorie percentages
     -   `quality.py`: Detects missing/inconsistent nutrient data, calculates
         fallback energy using Atwater factors (4p + 4c + 9f)
+    -   `pattern_staples.py`: Curated food ID lists per dietary pattern.
+        `SOURCE_MAPPING` maps slot names (eggs, fish, leafy_greens, cruciferous)
+        to staple lists. Vegetable sub-categories: `LEAFY_GREENS`, `CRUCIFEROUS`,
+        `OTHER_VEGETABLES`, `MUSHROOMS`.
 
 -   **`export/`**: Output formatters:
     -   `meal_allocator.py`: Post-hoc meal distribution using keyword heuristics
         (eggs→breakfast, fish→lunch/dinner, nuts→snack)
+
+-   **`templates/`**: Template-based meal composition (human-like meal planning):
+    -   `models.py`: Data models (SlotDefinition, MealTemplate, DietTemplate,
+        SelectedMeal, TemplateOptimizationResult, SelectionStrategy)
+    -   `definitions.py`: Built-in templates per dietary pattern (pescatarian,
+        keto, vegan, vegetarian, mediterranean, paleo, pescatarian_slowcarb)
+    -   `selector.py`: Food selection with diversity tracking. `select_foods_for_template()`
+        picks one food per slot per meal, excluding already-used foods.
+    -   `optimizer.py`: Small QP (~16-20 variables) with slot-aware target portions.
+        `run_template_optimization()` is the main entry point.
 
 ### Database Schema
 
@@ -314,6 +339,25 @@ Profiles with `meals:` are auto-detected and routed to the multi-period solver.
     slackness, stationarity) with full Lagrange multipliers for all
     binding constraints including variable bounds
 
+## Claude Code Skills
+
+This project includes Claude Code skills (slash commands) for interactive meal planning:
+
+| Skill | Trigger | Description |
+|-------|---------|-------------|
+| `/mealplan` | "create a meal plan", "optimize my diet" | Interactive wizard for diet planning |
+| `/template` | "realistic meals", "different foods each meal" | Template-based meal composition |
+| `/multiperiod` | "per meal calories", "balanced meals" | Per-meal constraint optimization |
+| `/recipes` | "create recipes", "weekly menu" | Generate recipes from optimization |
+
+Skills are defined in `.claude/skills/*/SKILL.md`.
+
+### Recommended Workflow
+
+1. **Start with `/mealplan`** - Gathers user goals and runs optimization
+2. **Or use `/template` directly** - For users who want realistic meals immediately
+3. **Follow with `/recipes`** - Generate practical meal plans and recipes
+
 ## Using as an LLM Tool
 
 This tool is designed to be invoked by LLM agents (Claude Code, Codex CLI,
@@ -333,20 +377,31 @@ etc.) for iterative diet planning.
 
 For LLMs that want to explore multiple diet configurations:
 
-1.  **Generate pool suggestions**: `uv run mealplan explore suggest-pools --json`
+1.  **Template-based (recommended)**: `uv run mealplan optimize --pattern pescatarian --template --json`
+    Produces realistic meals with proper structure (1 protein + 1 legume + vegetables per meal)
+2.  **Generate pool suggestions**: `uv run mealplan explore suggest-pools --json`
     Returns balanced, high-protein, and budget food pools
-2.  **Run batch optimization**: Create a pools.json and run
+3.  **Run batch optimization**: Create a pools.json and run
     `uv run mealplan optimize-batch pools.json --json` to compare pools
-3.  **Or use explicit foods**: `uv run mealplan optimize --foods 175167,171287 --json`
+4.  **Or use explicit foods**: `uv run mealplan optimize --foods 175167,171287 --json`
     Bypass tag filtering with specific food IDs
-4.  **Limit food count**: `uv run mealplan optimize --max-foods-in-solution 10 --json`
+5.  **Limit food count**: `uv run mealplan optimize --max-foods-in-solution 10 --json`
     Get meal-prep friendly solutions with fewer distinct foods
-5.  **Allocate to meals**: `uv run mealplan optimize --allocate-meals --json`
+6.  **Allocate to meals**: `uv run mealplan optimize --allocate-meals --json`
     Distributes foods into breakfast/lunch/dinner/snack slots (post-hoc heuristic)
-6.  **Multi-period optimization**: `uv run mealplan optimize --multiperiod --json`
-    Enforce per-meal constraints at optimization time (no post-hoc allocation)
-7.  **Compare runs**: `uv run mealplan explore compare-runs 5 8 --json`
+7.  **Multi-period optimization**: `uv run mealplan optimize --multiperiod --json`
+    Enforce per-meal constraints at optimization time (Stigler-style QP)
+8.  **Compare runs**: `uv run mealplan explore compare-runs 5 8 --json`
     See differences between optimization runs
+
+### When to Use Each Mode
+
+| Mode | Use When | Output Quality |
+|------|----------|----------------|
+| `--template` | Want realistic, cookable meals | High - proper meal structure |
+| `--multiperiod` | Need exact per-meal nutrient control | Medium - may spread foods |
+| `--allocate-meals` | Quick post-hoc distribution | Low - heuristic-based |
+| (default) | Daily totals only | N/A - no meal structure |
 
 ### JSON Response Envelope
 
