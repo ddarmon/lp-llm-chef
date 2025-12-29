@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from mealplan.data.food_categories import FoodCategory, classify_food
+from llmn.data.food_categories import FoodCategory, classify_food
 
 
 class TestFoodClassification:
@@ -91,7 +91,7 @@ class TestClassifyFoodsInDb:
 
     def test_classify_sample_foods(self, sample_foods):
         """Test classifying foods from sample database."""
-        from mealplan.data.food_categories import classify_foods_in_db
+        from llmn.data.food_categories import classify_foods_in_db
 
         with sample_foods.get_connection() as conn:
             categories = classify_foods_in_db(conn, [1, 2, 3, 4, 5])

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from mealplan.optimizer.models import NutrientConstraint
-from mealplan.optimizer.multiperiod_constraints import MultiPeriodConstraintBuilder
-from mealplan.optimizer.multiperiod_models import (
+from llmn.optimizer.models import NutrientConstraint
+from llmn.optimizer.multiperiod_constraints import MultiPeriodConstraintBuilder
+from llmn.optimizer.multiperiod_models import (
     DEFAULT_CALORIE_SPLITS,
     DEFAULT_TYPICAL_PORTIONS,
     EquiCalorieConstraint,
@@ -18,7 +18,7 @@ from mealplan.optimizer.multiperiod_models import (
     MultiPeriodRequest,
     derive_default_meal_configs,
 )
-from mealplan.optimizer.multiperiod_solver import solve_multiperiod_diet
+from llmn.optimizer.multiperiod_solver import solve_multiperiod_diet
 
 
 class TestMealType:

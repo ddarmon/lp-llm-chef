@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from mealplan.db.connection import get_db
-from mealplan.templates.definitions import (
+from llmn.db.connection import get_db
+from llmn.templates.definitions import (
     get_template,
     get_template_for_patterns,
     list_available_templates,
 )
-from mealplan.templates.models import (
+from llmn.templates.models import (
     DietTemplate,
     DiversityRule,
     SelectionStrategy,
 )
-from mealplan.templates.optimizer import run_template_optimization
-from mealplan.templates.selector import (
+from llmn.templates.optimizer import run_template_optimization
+from llmn.templates.selector import (
     get_candidates_for_slot,
     select_foods_for_template,
 )

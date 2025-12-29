@@ -13,25 +13,25 @@ This skill helps users track their weight and learn their personalized TDEE (Tot
 
 ```bash
 # Log today's weight
-uv run mealplan weight add 184.2
+uv run llmn weight add 184.2
 
 # Log weight for a specific date
-uv run mealplan weight add 183.8 --date 2025-12-27
+uv run llmn weight add 183.8 --date 2025-12-27
 
 # View weight history with EMA trends
-uv run mealplan weight list --days 30
+uv run llmn weight list --days 30
 
 # Log planned calorie intake
-uv run mealplan calories log 1900
+uv run llmn calories log 1900
 
 # Update TDEE estimate (runs Kalman filter)
-uv run mealplan tdee estimate
+uv run llmn tdee estimate
 
 # Show comprehensive progress report
-uv run mealplan tdee progress
+uv run llmn tdee progress
 
 # Get adaptive calorie targets based on current progress
-uv run mealplan tdee targets
+uv run llmn tdee targets
 ```
 
 ## Workflow
@@ -39,14 +39,14 @@ uv run mealplan tdee targets
 ### Step 1: Check if User Has a Profile
 
 ```bash
-uv run mealplan user show
+uv run llmn user show
 ```
 
 If no profile exists, create one:
 
 ```bash
-uv run mealplan user create --age 38 --sex male --height 72 --activity moderate
-uv run mealplan user update --weight 185 --goal "fat_loss:165"
+uv run llmn user create --age 38 --sex male --height 72 --activity moderate
+uv run llmn user update --weight 185 --goal "fat_loss:165"
 ```
 
 **Activity levels**: `sedentary`, `lightly_active`, `moderate`, `active`, `very_active`
@@ -56,10 +56,10 @@ uv run mealplan user update --weight 185 --goal "fat_loss:165"
 When the user provides a weight measurement:
 
 ```bash
-uv run mealplan weight add <weight_in_lbs>
+uv run llmn weight add <weight_in_lbs>
 
 # With specific date
-uv run mealplan weight add <weight> --date YYYY-MM-DD
+uv run llmn weight add <weight> --date YYYY-MM-DD
 ```
 
 The system automatically computes the EMA trend using the Hacker's Diet formula:
@@ -74,10 +74,10 @@ This filters out daily noise with a ~10-day time constant.
 If the user mentions what they ate or their meal plan calories:
 
 ```bash
-uv run mealplan calories log <calories>
+uv run llmn calories log <calories>
 
 # With specific date
-uv run mealplan calories log <calories> --date YYYY-MM-DD
+uv run llmn calories log <calories> --date YYYY-MM-DD
 ```
 
 ### Step 4: Check Progress
@@ -85,7 +85,7 @@ uv run mealplan calories log <calories> --date YYYY-MM-DD
 For progress check requests:
 
 ```bash
-uv run mealplan tdee progress
+uv run llmn tdee progress
 ```
 
 This shows:
@@ -101,7 +101,7 @@ This shows:
 To update the Kalman filter with recent data:
 
 ```bash
-uv run mealplan tdee estimate
+uv run llmn tdee estimate
 ```
 
 This runs the Kalman filter and shows a brief summary:
@@ -119,7 +119,7 @@ After 2-3 weeks of data, the filter converges on your personalized TDEE.
 For actionable recommendations based on current progress:
 
 ```bash
-uv run mealplan tdee targets
+uv run llmn tdee targets
 ```
 
 This compares your current rate of loss to your goal and tells you whether to adjust:
@@ -199,13 +199,13 @@ Encourage users to log daily (takes 10 seconds):
 
 ```bash
 # Morning: log weight
-uv run mealplan weight add 183.2
+uv run llmn weight add 183.2
 
 # After meal planning: log calories
-uv run mealplan calories log 1850
+uv run llmn calories log 1850
 ```
 
-Weekly: check progress with `uv run mealplan tdee progress`
+Weekly: check progress with `uv run llmn tdee progress`
 
 ## Connecting to Meal Planning
 
@@ -213,10 +213,10 @@ Once TDEE is learned, use it for better meal planning:
 
 ```bash
 # Get your personalized targets (uses adjusted TDEE)
-uv run mealplan tdee estimate
+uv run llmn tdee estimate
 
 # Then optimize with those targets
-uv run mealplan optimize --pattern pescatarian --template --goal "fat_loss:183lbs:165lbs" --json
+uv run llmn optimize --pattern pescatarian --template --goal "fat_loss:183lbs:165lbs" --json
 ```
 
 The goal flag uses Mifflin-St Jeor by default, but knowing your actual TDEE helps interpret whether you need to adjust calorie targets.
@@ -227,7 +227,7 @@ User: "I weighed 183.2 this morning"
 
 1. Log the weight:
    ```bash
-   uv run mealplan weight add 183.2
+   uv run llmn weight add 183.2
    ```
 
 2. Show the result with trend:
@@ -239,14 +239,14 @@ User: "I weighed 183.2 this morning"
 
 3. Offer to show full progress:
    ```bash
-   uv run mealplan tdee progress
+   uv run llmn tdee progress
    ```
 
 User: "How am I doing on my diet?"
 
 1. Run progress report:
    ```bash
-   uv run mealplan tdee progress
+   uv run llmn tdee progress
    ```
 
 2. Summarize key metrics:

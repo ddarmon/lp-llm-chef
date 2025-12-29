@@ -28,16 +28,16 @@ Snack:     Peanuts 30g
 
 ```bash
 # Basic template-based optimization
-uv run mealplan optimize --pattern pescatarian --template --json
+uv run llmn optimize --pattern pescatarian --template --json
 
 # With multiple patterns
-uv run mealplan optimize --pattern pescatarian --pattern slow_carb --template --json
+uv run llmn optimize --pattern pescatarian --pattern slow_carb --template --json
 
 # With reproducible seed
-uv run mealplan optimize --pattern pescatarian --template --seed 42 --json
+uv run llmn optimize --pattern pescatarian --template --seed 42 --json
 
 # With goal-based targets
-uv run mealplan optimize --pattern pescatarian --template --goal "fat_loss:185lbs:165lbs" --json
+uv run llmn optimize --pattern pescatarian --template --goal "fat_loss:185lbs:165lbs" --json
 ```
 
 ## Available Patterns
@@ -80,7 +80,7 @@ Use the `--goal` flag:
 ### Step 4: Run Optimization
 
 ```bash
-uv run mealplan optimize --pattern pescatarian --pattern slow_carb --template --goal "fat_loss:185lbs:165lbs" --json
+uv run llmn optimize --pattern pescatarian --pattern slow_carb --template --goal "fat_loss:185lbs:165lbs" --json
 ```
 
 ### Step 5: Present Results
@@ -146,7 +146,7 @@ User: "I want realistic meals, not the same vegetables everywhere"
 3. Ask: Goal? (weight loss/maintenance/muscle gain)
 4. Run:
    ```bash
-   uv run mealplan optimize --pattern pescatarian --pattern slow_carb --template --goal "fat_loss:185lbs:165lbs" --json
+   uv run llmn optimize --pattern pescatarian --pattern slow_carb --template --goal "fat_loss:185lbs:165lbs" --json
    ```
 5. Show results:
    - Breakfast: Eggs 150g, Edamame 100g, Kale 100g

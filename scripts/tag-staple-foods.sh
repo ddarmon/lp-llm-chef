@@ -157,7 +157,7 @@ tag_category() {
     echo -e "${CYAN}Tagging $category_name...${NC}"
 
     for fdc_id in "${!foods[@]}"; do
-        if mealplan tags add "$fdc_id" staple 2>/dev/null; then
+        if llmn tags add "$fdc_id" staple 2>/dev/null; then
             echo -e "  ${GREEN}+${NC} ${foods[$fdc_id]}"
             ((count++))
         fi
@@ -215,7 +215,7 @@ while true; do
                 echo "Usage: s <search query>"
                 continue
             fi
-            mealplan search "$args"
+            llmn search "$args"
             ;;
 
         t|tag)
@@ -223,7 +223,7 @@ while true; do
                 echo "Usage: t <fdc_id>"
                 continue
             fi
-            mealplan tags add "$args" staple
+            llmn tags add "$args" staple
             echo -e "${GREEN}Tagged $args as staple${NC}"
             ;;
 
@@ -232,7 +232,7 @@ while true; do
                 echo "Usage: x <fdc_id>"
                 continue
             fi
-            mealplan tags add "$args" exclude
+            llmn tags add "$args" exclude
             echo -e "${GREEN}Tagged $args as exclude${NC}"
             ;;
 
@@ -241,14 +241,14 @@ while true; do
                 echo "Usage: r <fdc_id>"
                 continue
             fi
-            mealplan tags remove "$args" staple
+            llmn tags remove "$args" staple
             echo -e "${YELLOW}Removed staple tag from $args${NC}"
             ;;
 
         l|list)
             echo ""
             echo "Current staple foods:"
-            mealplan tags list --tag staple 2>/dev/null || echo "(none yet)"
+            llmn tags list --tag staple 2>/dev/null || echo "(none yet)"
             echo ""
             ;;
 

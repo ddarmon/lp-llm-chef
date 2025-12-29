@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from mealplan.data.quality import calculate_fallback_energy, detect_incomplete_foods
+from llmn.data.quality import calculate_fallback_energy, detect_incomplete_foods
 
 
 class TestCalculateFallbackEnergy:
