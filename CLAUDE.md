@@ -52,6 +52,22 @@ ruff check src/
 mypy src/llmn/
 ```
 
+## Git Workflow
+
+Always start new work from a clean branch off main:
+
+``` bash
+# For new features
+git checkout main && git pull
+git checkout -b feature/your-feature-name
+
+# For bug fixes
+git checkout main && git pull
+git checkout -b bugfix/your-bugfix-name
+```
+
+This prevents mixing unrelated changes and simplifies PRs.
+
 ## Quick Start Scripts
 
 Interactive scripts for new users:
