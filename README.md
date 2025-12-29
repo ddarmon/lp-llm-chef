@@ -1,10 +1,11 @@
-# lp-llm-chef
+# llmn 🍋
 
-A meal planning system that uses linear/quadratic programming to find
-diverse combinations of foods satisfying nutritional constraints.
-Designed to work both as a personal CLI tool and as an **agentic tool
-for LLMs** (Claude Code, Codex CLI, etc.) to iteratively design diets
-from natural language goals.
+**llmn** (pronounced "lemon") = **LLM** + **N**utrition
+
+A diet optimization tool designed for both humans and AI agents. Uses
+quadratic programming to find diverse food combinations satisfying
+nutritional constraints, with first-class support for LLM tool use
+(Claude Code, Codex CLI, etc.).
 
 ## Features
 
@@ -53,8 +54,8 @@ from natural language goals.
 Requires Python 3.11+ and scipy 1.16+.
 
 ``` bash
-git clone https://github.com/yourusername/lp-llm-chef.git
-cd lp-llm-chef
+git clone https://github.com/ddarmon/llmn.git
+cd llmn
 
 # Using uv (recommended)
 uv sync

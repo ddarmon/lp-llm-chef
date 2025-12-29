@@ -5,10 +5,11 @@ with code in this repository.
 
 ## Project Overview
 
-`lp-llm-chef` is a meal planning optimization system designed to be used
-both by humans and as a **tool for LLM agents**. It uses quadratic
-programming (QP) to find diverse food combinations satisfying nutritional
-constraints, with USDA FoodData Central as its nutrition database.
+**llmn** (pronounced "lemon") = **LLM** + **N**utrition
+
+A diet optimization tool designed for both humans and AI agents. Uses
+quadratic programming (QP) to find diverse food combinations satisfying
+nutritional constraints, with USDA FoodData Central as its nutrition database.
 
 **Key capability**: All CLI commands support `--json` output with a
 structured response envelope, making this tool usable by Claude Code,
