@@ -34,13 +34,13 @@ class TDEEFilter:
         bias: Current TDEE bias estimate (kcal/day)
         variance: Current uncertainty (kcal²/day²)
         process_noise: Random walk variance per day (default: 25 = 5² kcal/day)
-        obs_noise: Observation noise variance (default: 2500 = 50² kcal/day)
+        obs_noise: Observation noise variance (default: 22500 = 150² kcal/day)
     """
 
     bias: float = 0.0
     variance: float = 10000.0  # Initial uncertainty: 100 kcal/day std
     process_noise: float = 25.0  # 5 kcal/day std per day
-    obs_noise: float = 2500.0  # 50 kcal/day std observation noise
+    obs_noise: float = 22500.0  # 150 kcal/day std observation noise (conservative)
 
     def predict(self, days: int = 7) -> None:
         """
@@ -55,6 +55,10 @@ class TDEEFilter:
         """
         Update step: incorporate new observation.
 
+        The measurement model is: z = x + noise, where z is the observed
+        difference between implied and expected deficit, and x is the true
+        TDEE bias. The innovation (residual) is z - x_predicted.
+
         Args:
             implied_deficit: Observed calorie deficit from trend change
                             = (trend_start - trend_end) × 3500 / days
@@ -62,21 +66,26 @@ class TDEEFilter:
                             = mifflin_tdee - planned_calories
 
         Returns:
-            Innovation (observed - expected). Positive means losing
-            faster than expected → TDEE is higher than thought.
+            Residual (z - x_predicted). Positive means observed deficit
+            exceeded prediction → TDEE may be higher than thought.
         """
-        innovation = implied_deficit - expected_deficit
+        # Measurement z: if TDEE = mifflin + bias, then implied_deficit should
+        # equal expected_deficit + bias. So z = implied - expected measures bias.
+        z = implied_deficit - expected_deficit
+
+        # Innovation (residual): difference between measurement and predicted state
+        residual = z - self.bias
 
         # Kalman gain
         kalman_gain = self.variance / (self.variance + self.obs_noise)
 
-        # Update state
-        self.bias += kalman_gain * innovation
+        # Update state: x += K * (z - x)
+        self.bias += kalman_gain * residual
 
         # Update variance
         self.variance *= 1 - kalman_gain
 
-        return innovation
+        return residual
 
     def predict_and_update(
         self,
@@ -124,16 +133,20 @@ class TDEEFilter:
 def run_filter_on_history(
     trend_history: list[tuple[float, float]],  # (trend_start, trend_end) per week
     calorie_history: list[float],  # average daily calories per week
-    mifflin_tdee: float,
+    tdee_history: list[float],  # per-week Mifflin TDEE (based on that week's weight)
     initial_filter: Optional[TDEEFilter] = None,
 ) -> TDEEFilter:
     """
     Run Kalman filter on historical data.
 
+    Uses time-varying baseline TDEE to keep the learned bias interpretable as
+    "personal deviation from formula" rather than absorbing weight-change effects.
+
     Args:
         trend_history: List of (trend_start, trend_end) tuples per week
         calorie_history: List of average daily calorie intakes per week
-        mifflin_tdee: Baseline TDEE from Mifflin-St Jeor
+        tdee_history: Per-week Mifflin TDEE values (recalculated using each week's
+                     starting weight). Must have same length as trend_history.
         initial_filter: Optional initial filter state
 
     Returns:
@@ -149,12 +162,14 @@ def run_filter_on_history(
             obs_noise=initial_filter.obs_noise,
         )
 
-    for (trend_start, trend_end), avg_calories in zip(trend_history, calorie_history):
+    for (trend_start, trend_end), avg_calories, mifflin_tdee in zip(
+        trend_history, calorie_history, tdee_history
+    ):
         # Implied deficit from observed trend change
         # Positive if losing weight (trend_start > trend_end)
         implied_deficit = (trend_start - trend_end) * 3500 / 7
 
-        # Expected deficit from meal plan
+        # Expected deficit from meal plan (using this week's weight-adjusted TDEE)
         expected_deficit = mifflin_tdee - avg_calories
 
         # Update filter

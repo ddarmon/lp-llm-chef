@@ -3427,7 +3427,10 @@ def tdee_estimate(
     """Run TDEE estimation using Kalman filter on weight/calorie data."""
     from datetime import date, timedelta
 
-    from mealplan.tracking.diagnostics import calculate_mifflin_tdee
+    from mealplan.tracking.diagnostics import (
+        calculate_mifflin_tdee,
+        calculate_mifflin_tdee_at_weight,
+    )
     from mealplan.tracking.models import TDEEEstimate
     from mealplan.tracking.queries import (
         CalorieQueries,
@@ -3472,7 +3475,7 @@ def tdee_estimate(
                 console.print("[yellow]Not enough weight data. Need at least 1 week.[/yellow]")
             raise typer.Exit(1)
 
-        # Calculate Mifflin-St Jeor TDEE
+        # Calculate baseline Mifflin-St Jeor TDEE (for final display)
         mifflin_tdee = calculate_mifflin_tdee(profile)
 
         # Always start fresh - recalculating from the 8-week history is cheap
@@ -3481,6 +3484,9 @@ def tdee_estimate(
 
         # Run filter on weekly data
         # Group weight data by week and compute trend changes
+        # Use time-varying baseline: recalculate Mifflin each week using that
+        # week's starting trend weight. This keeps the learned bias interpretable
+        # as "personal deviation from formula" rather than absorbing weight-drift.
         weeks_processed = 0
         for week_start in range(0, len(weight_history) - 7, 7):
             week_entries = weight_history[week_start : week_start + 7]
@@ -3500,11 +3506,15 @@ def tdee_estimate(
             if avg_calories is None:
                 continue  # Skip weeks without calorie data
 
+            # Calculate Mifflin TDEE using this week's starting weight
+            # (time-varying baseline for accurate bias learning)
+            week_mifflin_tdee = calculate_mifflin_tdee_at_weight(profile, trend_start)
+
             # Implied deficit from trend change
             implied_deficit = (trend_start - trend_end) * 3500 / 7
 
-            # Expected deficit from plan
-            expected_deficit = mifflin_tdee - avg_calories
+            # Expected deficit from plan (using this week's weight-adjusted TDEE)
+            expected_deficit = week_mifflin_tdee - avg_calories
 
             # Update filter
             tdee_filter.predict_and_update(implied_deficit, expected_deficit, days=7)

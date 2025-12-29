@@ -61,8 +61,23 @@ class ProgressReport:
 
 def calculate_mifflin_tdee(profile: UserProfile) -> float:
     """Calculate TDEE using Mifflin-St Jeor + activity multiplier."""
-    # Get current weight from profile
-    weight_lbs = profile.weight_lbs
+    return calculate_mifflin_tdee_at_weight(profile, profile.weight_lbs)
+
+
+def calculate_mifflin_tdee_at_weight(profile: UserProfile, weight_lbs: float) -> float:
+    """
+    Calculate TDEE at a specific weight using Mifflin-St Jeor + activity multiplier.
+
+    This allows time-varying TDEE calculation as weight changes, keeping the
+    learned bias interpretable as personal deviation from formula.
+
+    Args:
+        profile: User profile (for height, age, sex, activity level)
+        weight_lbs: Weight to use for calculation (in pounds)
+
+    Returns:
+        TDEE in kcal/day
+    """
     height_inches = profile.height_inches
     age = profile.age
     sex = profile.sex
