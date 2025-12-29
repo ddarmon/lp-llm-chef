@@ -1,4 +1,4 @@
-"""Pytest fixtures for mealplan tests."""
+"""Pytest fixtures for llmn tests."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from mealplan.db.connection import DatabaseConnection
-from mealplan.db.schema import get_schema_sql
+from llmn.db.connection import DatabaseConnection
+from llmn.db.schema import get_schema_sql
 
 
 @pytest.fixture

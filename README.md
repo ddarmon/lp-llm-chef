@@ -58,7 +58,7 @@ cd lp-llm-chef
 
 # Using uv (recommended)
 uv sync
-uv run mealplan --help
+uv run llmn --help
 
 # Or with pip
 pip install -e .
@@ -106,30 +106,30 @@ Get the "Full Download of All Data Types" in CSV format and extract it.
 #### 2. Initialize the Database
 
 ``` bash
-uv run mealplan init ~/Downloads/FoodData_Central_csv_2024-04-18/
+uv run llmn init ~/Downloads/FoodData_Central_csv_2024-04-18/
 ```
 
 This loads \~10,000 foods from Foundation Foods and SR Legacy datasets
-into a local SQLite database at `~/.mealplan/mealplan.db`.
+into a local SQLite database at `~/.llmn/llmn.db`.
 
 #### 3. Run Optimization
 
 ``` bash
 # Default: feasibility mode (finds diverse, nutritionally complete foods)
-uv run mealplan optimize
+uv run llmn optimize
 
 # With a constraint profile
-uv run mealplan optimize --profile cutting
+uv run llmn optimize --profile cutting
 
 # Limit number of foods considered (default 300, for speed)
-uv run mealplan optimize --max-foods 500
+uv run llmn optimize --max-foods 500
 
 # Output as JSON or Markdown
-uv run mealplan optimize --output json
-uv run mealplan optimize --output markdown
+uv run llmn optimize --output json
+uv run llmn optimize --output markdown
 
 # Show KKT optimality conditions (verify solution is optimal)
-uv run mealplan optimize --verbose
+uv run llmn optimize --verbose
 ```
 
 ### 4. Add Prices (Optional, for Cost Minimization)
@@ -139,17 +139,17 @@ feasibility mode, all foods in the database are eligible.
 
 ``` bash
 # Search for a food
-uv run mealplan search "chicken breast"
+uv run llmn search "chicken breast"
 # Found: 171077 - Chicken, broilers or fryers, breast, skinless, boneless...
 
 # Add price (per 100g)
-uv run mealplan prices add 171077 0.80 --source costco
+uv run llmn prices add 171077 0.80 --source costco
 
 # Or import from CSV
-uv run mealplan prices import my_prices.csv
+uv run llmn prices import my_prices.csv
 
 # Run with cost minimization
-uv run mealplan optimize --minimize-cost
+uv run llmn optimize --minimize-cost
 ```
 
 Price CSV format:
@@ -164,7 +164,7 @@ fdc_id,price_per_100g,price_source,notes
 
 ``` bash
 # Export the last optimization as an LLM prompt
-uv run mealplan export-for-llm latest --days 7 --output meal_request.md
+uv run llmn export-for-llm latest --days 7 --output meal_request.md
 
 # Then paste the contents into Claude to get recipes
 ```
@@ -190,7 +190,7 @@ This gives Claude complete nutritional context to generate accurate recipes.
 Create YAML files to define your dietary constraints:
 
 ``` yaml
-# ~/.mealplan/constraints/cutting.yaml
+# ~/.llmn/constraints/cutting.yaml
 name: cutting
 description: "Weight loss: 1600-1800 cal, high protein"
 
@@ -221,13 +221,13 @@ options:
 Save the profile:
 
 ``` bash
-uv run mealplan profile create cutting --from-file cutting.yaml
+uv run llmn profile create cutting --from-file cutting.yaml
 ```
 
 **Interactive Wizard**: You can also create profiles interactively:
 
 ``` bash
-uv run mealplan profile wizard
+uv run llmn profile wizard
 ```
 
 Available nutrient names: `protein`, `carbohydrate`, `total_fat`,
@@ -242,20 +242,20 @@ Tag foods for filtering in optimization:
 
 ``` bash
 # Add tags
-uv run mealplan tags add 171077 protein
-uv run mealplan tags add 171077 meal-prep
+uv run llmn tags add 171077 protein
+uv run llmn tags add 171077 meal-prep
 
 # Exclude foods
-uv run mealplan tags add 12345 exclude
+uv run llmn tags add 12345 exclude
 
 # List foods with a tag
-uv run mealplan tags list --tag protein
+uv run llmn tags list --tag protein
 ```
 
 **Interactive Tagging**: Quickly search and tag foods by number:
 
 ``` bash
-uv run mealplan tags interactive
+uv run llmn tags interactive
 ```
 
 Use `exclude_tags` and `include_tags` in profiles to filter foods.
@@ -308,40 +308,40 @@ All commands should be prefixed with `uv run` when using `uv` as the project man
 
 | Command | Description |
 |--------|-------------|
-| `mealplan init <path>` | Initialize database from USDA CSV directory |
-| `mealplan search <query>` | Search foods (shows price/tags) |
-| `mealplan info <fdc_id>` | Show nutrients for a food |
-| `mealplan optimize` | Run optimization |
-| `mealplan optimize --template` | Template-based (realistic meals) |
-| `mealplan optimize --multiperiod` | Multi-period mode (per-meal constraints) |
-| `mealplan optimize --verbose` | Show KKT optimality conditions |
-| `mealplan export-for-llm <id>` | Generate LLM prompt (use `latest` for last run) |
-| `mealplan history` | Show past optimization runs |
-| `mealplan prices add` | Add/update a food price |
-| `mealplan prices import` | Import prices from CSV |
-| `mealplan prices list` | List priced foods |
-| `mealplan prices list --missing` | List foods without prices |
-| `mealplan tags add` | Add tag to food |
-| `mealplan tags remove` | Remove tag from food |
-| `mealplan tags list` | List all tags or foods with tag |
-| `mealplan tags interactive` | Interactive mode to search/tag |
-| `mealplan profile create` | Create profile from YAML |
-| `mealplan profile wizard` | Interactive profile creator |
-| `mealplan profile list` | List saved profiles |
-| `mealplan profile show` | Show profile details |
-| `mealplan user create` | Create user profile (age, sex, height, activity level) |
-| `mealplan user show` | Show current user profile |
-| `mealplan weight add <lbs>` | Log today's weight (computes EMA trend automatically) |
-| `mealplan weight list` | Show weight history with trends |
-| `mealplan calories log <kcal>` | Log planned calorie intake |
-| `mealplan tdee estimate` | Run Kalman filter to estimate personalized TDEE |
-| `mealplan tdee progress` | Show weight/TDEE progress report |
+| `llmn init <path>` | Initialize database from USDA CSV directory |
+| `llmn search <query>` | Search foods (shows price/tags) |
+| `llmn info <fdc_id>` | Show nutrients for a food |
+| `llmn optimize` | Run optimization |
+| `llmn optimize --template` | Template-based (realistic meals) |
+| `llmn optimize --multiperiod` | Multi-period mode (per-meal constraints) |
+| `llmn optimize --verbose` | Show KKT optimality conditions |
+| `llmn export-for-llm <id>` | Generate LLM prompt (use `latest` for last run) |
+| `llmn history` | Show past optimization runs |
+| `llmn prices add` | Add/update a food price |
+| `llmn prices import` | Import prices from CSV |
+| `llmn prices list` | List priced foods |
+| `llmn prices list --missing` | List foods without prices |
+| `llmn tags add` | Add tag to food |
+| `llmn tags remove` | Remove tag from food |
+| `llmn tags list` | List all tags or foods with tag |
+| `llmn tags interactive` | Interactive mode to search/tag |
+| `llmn profile create` | Create profile from YAML |
+| `llmn profile wizard` | Interactive profile creator |
+| `llmn profile list` | List saved profiles |
+| `llmn profile show` | Show profile details |
+| `llmn user create` | Create user profile (age, sex, height, activity level) |
+| `llmn user show` | Show current user profile |
+| `llmn weight add <lbs>` | Log today's weight (computes EMA trend automatically) |
+| `llmn weight list` | Show weight history with trends |
+| `llmn calories log <kcal>` | Log planned calorie intake |
+| `llmn tdee estimate` | Run Kalman filter to estimate personalized TDEE |
+| `llmn tdee progress` | Show weight/TDEE progress report |
 
 ## Advanced LLM Features
 
 These features are designed for LLM agents doing iterative diet optimization.
 
-**Claude Code users**: This project includes slash commands (`/mealplan`, `/template`,
+**Claude Code users**: This project includes slash commands (`/llmn`, `/template`,
 `/multiperiod`, `/recipes`, `/tracking`) for interactive meal planning and weight tracking.
 See `.claude/skills/` for details.
 
@@ -349,23 +349,23 @@ See `.claude/skills/` for details.
 
 ``` bash
 # Generate food pool suggestions (balanced, high-protein, budget)
-uv run mealplan explore suggest-pools --json
+uv run llmn explore suggest-pools --json
 
 # Optimize with explicit food IDs (bypass tag filtering)
-uv run mealplan optimize --foods 175167,171287,172421 --json
+uv run llmn optimize --foods 175167,171287,172421 --json
 
 # Batch optimize multiple food pools at once
-uv run mealplan optimize-batch pools.json --json
+uv run llmn optimize-batch pools.json --json
 
 # Limit solution to N foods (meal-prep friendly)
-uv run mealplan optimize --max-foods-in-solution 10 --json
+uv run llmn optimize --max-foods-in-solution 10 --json
 ```
 
 ### Meal Allocation (Post-hoc)
 
 ``` bash
 # Distribute foods into breakfast/lunch/dinner/snack
-uv run mealplan optimize --allocate-meals --json
+uv run llmn optimize --allocate-meals --json
 ```
 
 This uses keyword heuristics (eggs→breakfast, fish→lunch/dinner, nuts→snack)
@@ -377,10 +377,10 @@ For realistic meals that look like what humans actually eat:
 
 ``` bash
 # Template-based optimization (recommended)
-uv run mealplan optimize --pattern pescatarian --pattern slow_carb --template
+uv run llmn optimize --pattern pescatarian --pattern slow_carb --template
 
 # With reproducible random seed
-uv run mealplan optimize --pattern pescatarian --template --seed 42
+uv run llmn optimize --pattern pescatarian --template --seed 42
 
 # Available patterns: pescatarian, vegetarian, vegan, keto, mediterranean, paleo, slow_carb
 ```
@@ -399,10 +399,10 @@ For per-meal constraints enforced at optimization time (Stigler-style QP):
 
 ``` bash
 # Auto-derive meal targets (25% breakfast, 35% lunch, 35% dinner, 5% snack)
-uv run mealplan optimize --multiperiod --json
+uv run llmn optimize --multiperiod --json
 
 # Use a profile with meals: section
-uv run mealplan optimize --file meals_profile.yaml --json
+uv run llmn optimize --file meals_profile.yaml --json
 ```
 
 Multi-period profiles define per-meal constraints:
@@ -437,10 +437,10 @@ This prevents issues like the optimizer putting all nuts into a single
 
 ``` bash
 # List recent optimization runs
-uv run mealplan explore runs
+uv run llmn explore runs
 
 # Compare two runs side-by-side
-uv run mealplan explore compare-runs 5 8 --json
+uv run llmn explore compare-runs 5 8 --json
 ```
 
 ### Food Categories
@@ -449,7 +449,7 @@ Filter foods by macro-based category:
 
 ``` bash
 # Find high-protein foods
-uv run mealplan explore foods "chicken" --category protein --json
+uv run llmn explore foods "chicken" --category protein --json
 
 # Categories: protein, fat, carb, vegetable, legume, fruit, mixed
 ```
@@ -469,7 +469,7 @@ Example constraint profiles are provided in `examples/constraints/`:
 Use directly with `--file`:
 
 ``` bash
-uv run mealplan optimize --file examples/constraints/cutting.yaml
+uv run llmn optimize --file examples/constraints/cutting.yaml
 ```
 
 ## Example Workflow
@@ -481,7 +481,7 @@ uv run mealplan optimize --file examples/constraints/cutting.yaml
 # OR manual setup:
 
 # 1. Initialize database (one time)
-uv run mealplan init ~/Downloads/FoodData_Central_csv/
+uv run llmn init ~/Downloads/FoodData_Central_csv/
 
 # 2. Tag your staple foods
 ./scripts/tag-staple-foods.sh
@@ -504,10 +504,10 @@ exclude_tags:
 EOF
 
 # 4. Run optimization
-uv run mealplan optimize --file my_diet.yaml
+uv run llmn optimize --file my_diet.yaml
 
 # 5. Get recipes from Claude
-uv run mealplan export-for-llm latest --days 7 --output ~/Desktop/meal_plan.md
+uv run llmn export-for-llm latest --days 7 --output ~/Desktop/meal_plan.md
 # Open meal_plan.md and paste into Claude
 ```
 
@@ -571,11 +571,11 @@ many foods because that minimizes deviation from the uniform 100g target.
 
 ## Configuration
 
-Settings are stored in `~/.mealplan/`:
+Settings are stored in `~/.llmn/`:
 
-    ~/.mealplan/
+    ~/.llmn/
     ├── config.yaml           # App settings
-    ├── mealplan.db          # SQLite database
+    ├── llmn.db          # SQLite database
     ├── preferences.yaml     # LLM prompt preferences
     ├── llm_prompt_template.md  # Custom prompt template
     └── profiles/            # Your constraint profiles
@@ -605,7 +605,7 @@ pytest tests/ -v
 ruff check src/
 
 # Type check
-mypy src/mealplan/
+mypy src/llmn/
 ```
 
 ## License

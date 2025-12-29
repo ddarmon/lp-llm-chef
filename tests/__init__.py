@@ -1,1 +1,1 @@
-"""Test suite for mealplan."""
+"""Test suite for llmn."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from mealplan.cli import app
+from llmn.cli import app
 
 runner = CliRunner()
 
@@ -16,7 +16,7 @@ class TestMainCommands:
         """Test that --help works."""
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "meal planning" in result.output.lower() or "mealplan" in result.output.lower()
+        assert "llmn" in result.output.lower() or "nutrition" in result.output.lower()
 
     def test_init_requires_path(self):
         """Test that init command requires USDA path."""

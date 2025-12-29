@@ -49,7 +49,7 @@ pytest tests/test_solver.py::TestSolveLP::test_simple_optimization -v
 ruff check src/
 
 # Type check with mypy
-mypy src/mealplan/
+mypy src/llmn/
 ```
 
 ## Quick Start Scripts
@@ -68,89 +68,89 @@ Interactive scripts for new users:
 
 ### Core Commands
 ``` bash
-uv run mealplan init <usda-csv-path>      # Initialize database from USDA data
-uv run mealplan search <query>             # Search foods (shows price/tags)
-uv run mealplan info <fdc_id>              # Show food nutrients
-uv run mealplan optimize                   # Run optimization (feasibility mode)
-uv run mealplan optimize --minimize-cost   # Run with cost minimization
-uv run mealplan optimize --max-foods 500   # Increase food pool (default 300)
-uv run mealplan optimize --profile <name>  # Use a constraint profile
-uv run mealplan optimize --file <yaml>     # Use YAML file directly
-uv run mealplan optimize --verbose         # Show KKT optimality conditions
-uv run mealplan export-for-llm latest      # Generate Claude prompt from last run
-uv run mealplan prices add <fdc_id> <price>
-uv run mealplan tags add <fdc_id> <tag>
-uv run mealplan tags list --tag <tag>      # List foods with a tag
-uv run mealplan tags interactive           # Interactive mode to search and tag
-uv run mealplan profile create <name> --from-file <yaml>
-uv run mealplan profile wizard             # Interactive profile creation wizard
+uv run llmn init <usda-csv-path>      # Initialize database from USDA data
+uv run llmn search <query>             # Search foods (shows price/tags)
+uv run llmn info <fdc_id>              # Show food nutrients
+uv run llmn optimize                   # Run optimization (feasibility mode)
+uv run llmn optimize --minimize-cost   # Run with cost minimization
+uv run llmn optimize --max-foods 500   # Increase food pool (default 300)
+uv run llmn optimize --profile <name>  # Use a constraint profile
+uv run llmn optimize --file <yaml>     # Use YAML file directly
+uv run llmn optimize --verbose         # Show KKT optimality conditions
+uv run llmn export-for-llm latest      # Generate Claude prompt from last run
+uv run llmn prices add <fdc_id> <price>
+uv run llmn tags add <fdc_id> <tag>
+uv run llmn tags list --tag <tag>      # List foods with a tag
+uv run llmn tags interactive           # Interactive mode to search and tag
+uv run llmn profile create <name> --from-file <yaml>
+uv run llmn profile wizard             # Interactive profile creation wizard
 ```
 
 ### Weight Tracking Commands
 ``` bash
-uv run mealplan user create --age 38 --sex male --height 72 --activity moderate
-uv run mealplan user update --weight 185 --goal "fat_loss:165"
-uv run mealplan user show                  # Show current user profile
+uv run llmn user create --age 38 --sex male --height 72 --activity moderate
+uv run llmn user update --weight 185 --goal "fat_loss:165"
+uv run llmn user show                  # Show current user profile
 
-uv run mealplan weight add 184.2           # Log today's weight (EMA computed)
-uv run mealplan weight add 183.8 --date 2025-12-27
-uv run mealplan weight list --days 30      # Show weight history with trends
+uv run llmn weight add 184.2           # Log today's weight (EMA computed)
+uv run llmn weight add 183.8 --date 2025-12-27
+uv run llmn weight list --days 30      # Show weight history with trends
 
-uv run mealplan calories log 1900          # Log planned intake for today
-uv run mealplan calories log 1900 --date 2025-12-27
+uv run llmn calories log 1900          # Log planned intake for today
+uv run llmn calories log 1900 --date 2025-12-27
 
-uv run mealplan tdee estimate              # Run Kalman filter on accumulated data
-uv run mealplan tdee progress              # Show comprehensive progress report
+uv run llmn tdee estimate              # Run Kalman filter on accumulated data
+uv run llmn tdee progress              # Show comprehensive progress report
 ```
 
 ### Agent/LLM Commands
 
 Schema export (for LLMs to understand constraint vocabulary):
 ``` bash
-uv run mealplan schema constraints         # JSON schema for constraint format
-uv run mealplan schema nutrients           # All nutrients with IDs, units, ranges
-uv run mealplan schema tags                # All tags in database
-uv run mealplan schema all                 # Complete schema documentation
+uv run llmn schema constraints         # JSON schema for constraint format
+uv run llmn schema nutrients           # All nutrients with IDs, units, ranges
+uv run llmn schema tags                # All tags in database
+uv run llmn schema all                 # Complete schema documentation
 ```
 
 Food exploration (for iterative diet design):
 ``` bash
-uv run mealplan explore foods "salmon" --min-protein 25 --json
-uv run mealplan explore foods "chicken" --category protein --json  # Filter by macro category
-uv run mealplan explore high-nutrient protein --min 30 --tag staple
-uv run mealplan explore compare 170567 170568 --nutrients protein,fat
-uv run mealplan explore whatif --base latest --add "fiber:min:40" --json
-uv run mealplan explore suggest-pools --json           # Generate food pool suggestions
-uv run mealplan explore runs --limit 10                # List recent optimization runs
-uv run mealplan explore compare-runs 5 8 --json        # Compare two runs
+uv run llmn explore foods "salmon" --min-protein 25 --json
+uv run llmn explore foods "chicken" --category protein --json  # Filter by macro category
+uv run llmn explore high-nutrient protein --min 30 --tag staple
+uv run llmn explore compare 170567 170568 --nutrients protein,fat
+uv run llmn explore whatif --base latest --add "fiber:min:40" --json
+uv run llmn explore suggest-pools --json           # Generate food pool suggestions
+uv run llmn explore runs --limit 10                # List recent optimization runs
+uv run llmn explore compare-runs 5 8 --json        # Compare two runs
 ```
 
 Advanced optimization:
 ``` bash
-uv run mealplan optimize --foods 175167,171287,172421  # Use explicit food IDs
-uv run mealplan optimize --max-foods-in-solution 10    # Limit to N foods (sparse)
-uv run mealplan optimize --allocate-meals --json       # Distribute into meals (post-hoc)
-uv run mealplan optimize-batch pools.json --json       # Run multiple pools at once
+uv run llmn optimize --foods 175167,171287,172421  # Use explicit food IDs
+uv run llmn optimize --max-foods-in-solution 10    # Limit to N foods (sparse)
+uv run llmn optimize --allocate-meals --json       # Distribute into meals (post-hoc)
+uv run llmn optimize-batch pools.json --json       # Run multiple pools at once
 ```
 
 Multi-period optimization (per-meal constraints):
 ``` bash
-uv run mealplan optimize --multiperiod --json          # Auto-derive meal targets (25/35/35/5%)
-uv run mealplan optimize --file meals.yaml --json      # Use profile with meals: section
+uv run llmn optimize --multiperiod --json          # Auto-derive meal targets (25/35/35/5%)
+uv run llmn optimize --file meals.yaml --json      # Use profile with meals: section
 ```
 
 Template-based optimization (recommended for realistic meals):
 ``` bash
-uv run mealplan optimize --pattern pescatarian --template --json       # Template-based
-uv run mealplan optimize --pattern pescatarian --template --seed 42    # Reproducible
+uv run llmn optimize --pattern pescatarian --template --json       # Template-based
+uv run llmn optimize --pattern pescatarian --template --seed 42    # Reproducible
 # Patterns: pescatarian, vegetarian, vegan, keto, mediterranean, paleo, slow_carb
 ```
 
 JSON output (add `--json` to any command):
 ``` bash
-uv run mealplan search chicken --json      # Structured search results
-uv run mealplan optimize --json            # Solution + suggestions + diagnosis
-uv run mealplan info 170567 --json         # Nutrient data as JSON
+uv run llmn search chicken --json      # Structured search results
+uv run llmn optimize --json            # Solution + suggestions + diagnosis
+uv run llmn info 170567 --json         # Nutrient data as JSON
 ```
 
 ## Architecture
@@ -377,7 +377,7 @@ This project includes Claude Code skills (slash commands) for interactive meal p
 
 | Skill | Trigger | Description |
 |-------|---------|-------------|
-| `/mealplan` | "create a meal plan", "optimize my diet" | Interactive wizard for diet planning |
+| `/llmn` | "create a meal plan", "optimize my diet" | Interactive wizard for diet planning |
 | `/template` | "realistic meals", "different foods each meal" | Template-based meal composition |
 | `/multiperiod` | "per meal calories", "balanced meals" | Per-meal constraint optimization |
 | `/recipes` | "create recipes", "weekly menu" | Generate recipes from optimization |
@@ -387,7 +387,7 @@ Skills are defined in `.claude/skills/*/SKILL.md`.
 
 ### Recommended Workflow
 
-1. **Start with `/mealplan`** - Gathers user goals and runs optimization
+1. **Start with `/llmn`** - Gathers user goals and runs optimization
 2. **Or use `/template` directly** - For users who want realistic meals immediately
 3. **Follow with `/recipes`** - Generate practical meal plans and recipes
 4. **Use `/tracking` daily** - Log weight and calories to learn personalized TDEE
@@ -399,11 +399,11 @@ etc.) for iterative diet planning.
 
 ### Basic Workflow
 
-1.  **Get schema**: `uv run mealplan schema all` returns constraint vocabulary
+1.  **Get schema**: `uv run llmn schema all` returns constraint vocabulary
 2.  **LLM translates goals**: User says "I want to lose weight, vegetarian"
     → LLM outputs structured constraints JSON
-3.  **Optimize**: `uv run mealplan optimize --json` returns solution + suggestions
-4.  **Iterate**: `uv run mealplan explore whatif --add "protein:min:180" --json`
+3.  **Optimize**: `uv run llmn optimize --json` returns solution + suggestions
+4.  **Iterate**: `uv run llmn explore whatif --add "protein:min:180" --json`
 5.  **Diagnose failures**: If infeasible, response includes diagnosis with
     suggested constraint relaxations
 
@@ -411,21 +411,21 @@ etc.) for iterative diet planning.
 
 For LLMs that want to explore multiple diet configurations:
 
-1.  **Template-based (recommended)**: `uv run mealplan optimize --pattern pescatarian --template --json`
+1.  **Template-based (recommended)**: `uv run llmn optimize --pattern pescatarian --template --json`
     Produces realistic meals with proper structure (1 protein + 1 legume + vegetables per meal)
-2.  **Generate pool suggestions**: `uv run mealplan explore suggest-pools --json`
+2.  **Generate pool suggestions**: `uv run llmn explore suggest-pools --json`
     Returns balanced, high-protein, and budget food pools
 3.  **Run batch optimization**: Create a pools.json and run
-    `uv run mealplan optimize-batch pools.json --json` to compare pools
-4.  **Or use explicit foods**: `uv run mealplan optimize --foods 175167,171287 --json`
+    `uv run llmn optimize-batch pools.json --json` to compare pools
+4.  **Or use explicit foods**: `uv run llmn optimize --foods 175167,171287 --json`
     Bypass tag filtering with specific food IDs
-5.  **Limit food count**: `uv run mealplan optimize --max-foods-in-solution 10 --json`
+5.  **Limit food count**: `uv run llmn optimize --max-foods-in-solution 10 --json`
     Get meal-prep friendly solutions with fewer distinct foods
-6.  **Allocate to meals**: `uv run mealplan optimize --allocate-meals --json`
+6.  **Allocate to meals**: `uv run llmn optimize --allocate-meals --json`
     Distributes foods into breakfast/lunch/dinner/snack slots (post-hoc heuristic)
-7.  **Multi-period optimization**: `uv run mealplan optimize --multiperiod --json`
+7.  **Multi-period optimization**: `uv run llmn optimize --multiperiod --json`
     Enforce per-meal constraints at optimization time (Stigler-style QP)
-8.  **Compare runs**: `uv run mealplan explore compare-runs 5 8 --json`
+8.  **Compare runs**: `uv run llmn explore compare-runs 5 8 --json`
     See differences between optimization runs
 
 ### When to Use Each Mode

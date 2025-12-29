@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from mealplan.optimizer.models import NutrientConstraint, OptimizationRequest
-from mealplan.optimizer.serialization import deserialize_request, serialize_request
+from llmn.optimizer.models import NutrientConstraint, OptimizationRequest
+from llmn.optimizer.serialization import deserialize_request, serialize_request
 
 
 class TestRequestSerialization:

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from mealplan.export.meal_allocator import (
+from llmn.export.meal_allocator import (
     allocate_to_meals,
     get_meal_affinity,
 )
-from mealplan.optimizer.models import FoodResult
+from llmn.optimizer.models import FoodResult
 
 
 class TestMealAffinity:

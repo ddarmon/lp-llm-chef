@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from mealplan.tracking.tdee_filter import TDEEFilter, run_filter_on_history
+from llmn.tracking.tdee_filter import TDEEFilter, run_filter_on_history
 
 
 class TestTDEEFilter:

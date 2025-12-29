@@ -2,7 +2,7 @@
 # setup-meal-plan.sh - Interactive setup for meal planning optimization
 #
 # This script walks you through:
-# 1. Installing the mealplan CLI
+# 1. Installing the llmn CLI
 # 2. Downloading and loading USDA nutrition data
 # 3. Selecting your diet type and style
 # 4. Creating a personalized constraint profile based on your goals
@@ -47,7 +47,7 @@ print_success() {
 # Get script directory (where this script lives)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
-DATA_DIR="${HOME}/.mealplan"
+DATA_DIR="${HOME}/.llmn"
 PROFILES_DIR="${DATA_DIR}/profiles"
 
 print_header "Welcome to Meal Plan Optimizer Setup"
@@ -65,13 +65,13 @@ echo ""
 
 print_header "Step 1: Checking Installation"
 
-if command -v mealplan &> /dev/null; then
-    print_success "mealplan CLI is installed"
+if command -v llmn &> /dev/null; then
+    print_success "llmn CLI is installed"
 else
-    print_warning "mealplan CLI not found. Installing..."
+    print_warning "llmn CLI not found. Installing..."
     cd "$PROJECT_DIR"
     pip install -e ".[dev]"
-    print_success "Installed mealplan CLI"
+    print_success "Installed llmn CLI"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -81,8 +81,8 @@ fi
 print_header "Step 2: USDA Nutrition Database"
 
 # Check if database already exists
-if [ -f "${DATA_DIR}/mealplan.db" ]; then
-    print_success "Database already exists at ${DATA_DIR}/mealplan.db"
+if [ -f "${DATA_DIR}/llmn.db" ]; then
+    print_success "Database already exists at ${DATA_DIR}/llmn.db"
     echo ""
     read -p "Do you want to reinitialize the database? (y/N): " reinit
     if [[ ! "$reinit" =~ ^[Yy]$ ]]; then
@@ -113,7 +113,7 @@ if [ "${SKIP_INIT}" != "true" ]; then
     fi
 
     print_step "Initializing database (this takes 1-2 minutes)..."
-    mealplan init "$usda_path"
+    llmn init "$usda_path"
     print_success "Database initialized with USDA nutrition data"
 fi
 
@@ -308,73 +308,73 @@ if [[ "$auto_tag" =~ ^[Yy]$ ]]; then
     # ─── PROTEINS ───
     # Fish/Seafood (for omnivore, pescatarian, mediterranean)
     if [ "$DIET_TYPE" != "vegetarian" ] && [ "$DIET_TYPE" != "vegan" ]; then
-        mealplan tags add 175167 staple 2>/dev/null && echo "  + Salmon" || true
-        mealplan tags add 175159 staple 2>/dev/null && echo "  + Tuna" || true
-        mealplan tags add 171955 staple 2>/dev/null && echo "  + Cod" || true
-        mealplan tags add 2684443 staple 2>/dev/null && echo "  + Shrimp" || true
-        mealplan tags add 175139 staple 2>/dev/null && echo "  + Sardines" || true
+        llmn tags add 175167 staple 2>/dev/null && echo "  + Salmon" || true
+        llmn tags add 175159 staple 2>/dev/null && echo "  + Tuna" || true
+        llmn tags add 171955 staple 2>/dev/null && echo "  + Cod" || true
+        llmn tags add 2684443 staple 2>/dev/null && echo "  + Shrimp" || true
+        llmn tags add 175139 staple 2>/dev/null && echo "  + Sardines" || true
     fi
 
     # Meat (omnivore only)
     if [ "$DIET_TYPE" = "omnivore" ]; then
-        mealplan tags add 171077 staple 2>/dev/null && echo "  + Chicken breast" || true
-        mealplan tags add 173110 staple 2>/dev/null && echo "  + Lean ground beef" || true
+        llmn tags add 171077 staple 2>/dev/null && echo "  + Chicken breast" || true
+        llmn tags add 173110 staple 2>/dev/null && echo "  + Lean ground beef" || true
     fi
 
     # Eggs (not vegan)
     if [ "$DIET_TYPE" != "vegan" ]; then
-        mealplan tags add 171287 staple 2>/dev/null && echo "  + Eggs (raw)" || true
-        mealplan tags add 173424 staple 2>/dev/null && echo "  + Eggs (hard-boiled)" || true
+        llmn tags add 171287 staple 2>/dev/null && echo "  + Eggs (raw)" || true
+        llmn tags add 173424 staple 2>/dev/null && echo "  + Eggs (hard-boiled)" || true
     fi
 
     # ─── LEGUMES ───
     # Always add for slow-carb, mediterranean, or vegan/vegetarian
     if [ "$LEGUME_FOCUS" = true ] || [ "$DIET_TYPE" = "vegan" ] || [ "$DIET_TYPE" = "vegetarian" ]; then
-        mealplan tags add 172421 staple 2>/dev/null && echo "  + Lentils" || true
-        mealplan tags add 175187 staple 2>/dev/null && echo "  + Black beans" || true
-        mealplan tags add 173757 staple 2>/dev/null && echo "  + Chickpeas" || true
-        mealplan tags add 174289 staple 2>/dev/null && echo "  + Hummus" || true
-        mealplan tags add 174286 staple 2>/dev/null && echo "  + Pinto beans" || true
+        llmn tags add 172421 staple 2>/dev/null && echo "  + Lentils" || true
+        llmn tags add 175187 staple 2>/dev/null && echo "  + Black beans" || true
+        llmn tags add 173757 staple 2>/dev/null && echo "  + Chickpeas" || true
+        llmn tags add 174289 staple 2>/dev/null && echo "  + Hummus" || true
+        llmn tags add 174286 staple 2>/dev/null && echo "  + Pinto beans" || true
     fi
 
     # ─── VEGETABLES ───
-    mealplan tags add 168462 staple 2>/dev/null && echo "  + Spinach" || true
-    mealplan tags add 169967 staple 2>/dev/null && echo "  + Broccoli" || true
-    mealplan tags add 168421 staple 2>/dev/null && echo "  + Kale" || true
-    mealplan tags add 169986 staple 2>/dev/null && echo "  + Cauliflower" || true
-    mealplan tags add 168389 staple 2>/dev/null && echo "  + Asparagus" || true
-    mealplan tags add 170108 staple 2>/dev/null && echo "  + Bell peppers" || true
-    mealplan tags add 170457 staple 2>/dev/null && echo "  + Tomatoes" || true
-    mealplan tags add 170000 staple 2>/dev/null && echo "  + Onions" || true
-    mealplan tags add 169230 staple 2>/dev/null && echo "  + Garlic" || true
-    mealplan tags add 169975 staple 2>/dev/null && echo "  + Cabbage" || true
+    llmn tags add 168462 staple 2>/dev/null && echo "  + Spinach" || true
+    llmn tags add 169967 staple 2>/dev/null && echo "  + Broccoli" || true
+    llmn tags add 168421 staple 2>/dev/null && echo "  + Kale" || true
+    llmn tags add 169986 staple 2>/dev/null && echo "  + Cauliflower" || true
+    llmn tags add 168389 staple 2>/dev/null && echo "  + Asparagus" || true
+    llmn tags add 170108 staple 2>/dev/null && echo "  + Bell peppers" || true
+    llmn tags add 170457 staple 2>/dev/null && echo "  + Tomatoes" || true
+    llmn tags add 170000 staple 2>/dev/null && echo "  + Onions" || true
+    llmn tags add 169230 staple 2>/dev/null && echo "  + Garlic" || true
+    llmn tags add 169975 staple 2>/dev/null && echo "  + Cabbage" || true
 
     # ─── CARBS (if not slow-carb/low-carb) ───
     if [ "$EXCLUDE_CARBS" = false ]; then
-        mealplan tags add 169704 staple 2>/dev/null && echo "  + Brown rice" || true
-        mealplan tags add 168482 staple 2>/dev/null && echo "  + Sweet potato" || true
-        mealplan tags add 171661 staple 2>/dev/null && echo "  + Oats" || true
-        mealplan tags add 173944 staple 2>/dev/null && echo "  + Bananas" || true
+        llmn tags add 169704 staple 2>/dev/null && echo "  + Brown rice" || true
+        llmn tags add 168482 staple 2>/dev/null && echo "  + Sweet potato" || true
+        llmn tags add 171661 staple 2>/dev/null && echo "  + Oats" || true
+        llmn tags add 173944 staple 2>/dev/null && echo "  + Bananas" || true
     fi
 
     # ─── FATS ───
-    mealplan tags add 171705 staple 2>/dev/null && echo "  + Avocado" || true
-    mealplan tags add 748608 staple 2>/dev/null && echo "  + Olive oil" || true
-    mealplan tags add 170567 staple 2>/dev/null && echo "  + Almonds" || true
+    llmn tags add 171705 staple 2>/dev/null && echo "  + Avocado" || true
+    llmn tags add 748608 staple 2>/dev/null && echo "  + Olive oil" || true
+    llmn tags add 170567 staple 2>/dev/null && echo "  + Almonds" || true
 
     # ─── DAIRY (if not vegan) ───
     if [ "$DIET_TYPE" != "vegan" ]; then
         if [ "$DIET_STYLE" = "slowcarb" ]; then
             # Slow-carb allows cottage cheese only
-            mealplan tags add 2346384 staple 2>/dev/null && echo "  + Cottage cheese" || true
+            llmn tags add 2346384 staple 2>/dev/null && echo "  + Cottage cheese" || true
         else
-            mealplan tags add 170886 staple 2>/dev/null && echo "  + Yogurt" || true
+            llmn tags add 170886 staple 2>/dev/null && echo "  + Yogurt" || true
         fi
     fi
 
     # ─── FERMENTED (slow-carb bonus) ───
     if [ "$DIET_STYLE" = "slowcarb" ]; then
-        mealplan tags add 169279 staple 2>/dev/null && echo "  + Sauerkraut" || true
+        llmn tags add 169279 staple 2>/dev/null && echo "  + Sauerkraut" || true
     fi
 
     echo ""
@@ -464,7 +464,7 @@ read -p "Press Enter to run optimization..."
 print_step "Running optimization..."
 echo ""
 
-mealplan optimize --file "$PROFILE_FILE" --output table
+llmn optimize --file "$PROFILE_FILE" --output table
 
 print_success "Optimization complete!"
 
@@ -480,7 +480,7 @@ read -p "How many days should the meal plan cover? [7]: " num_days
 num_days=${num_days:-7}
 
 OUTPUT_FILE="${DATA_DIR}/meal_plan_request.md"
-mealplan export-for-llm latest --days "$num_days" --output "$OUTPUT_FILE"
+llmn export-for-llm latest --days "$num_days" --output "$OUTPUT_FILE"
 
 print_success "Exported to: $OUTPUT_FILE"
 
@@ -501,14 +501,14 @@ echo "  2. Copy it to Claude (claude.ai) and ask:"
 echo "     ${BOLD}\"Create a ${num_days}-day meal plan with recipes using these foods.\"${NC}"
 echo ""
 echo "  3. Re-run optimization anytime:"
-echo "     ${BOLD}mealplan optimize --file $PROFILE_FILE${NC}"
+echo "     ${BOLD}llmn optimize --file $PROFILE_FILE${NC}"
 echo ""
 echo "  4. Add more staple foods:"
 echo "     ${BOLD}./scripts/tag-staple-foods.sh${NC}"
 echo ""
 echo "  5. Exclude foods you don't like:"
-echo "     ${BOLD}mealplan search \"food name\"${NC}"
-echo "     ${BOLD}mealplan tags add <fdc_id> exclude${NC}"
+echo "     ${BOLD}llmn search \"food name\"${NC}"
+echo "     ${BOLD}llmn tags add <fdc_id> exclude${NC}"
 echo "     Then re-run optimization."
 echo ""
 echo "  6. Edit your profile:"

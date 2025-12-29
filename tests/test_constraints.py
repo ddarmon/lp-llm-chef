@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from mealplan.optimizer.constraints import ConstraintBuilder, load_profile_from_yaml
-from mealplan.optimizer.models import NutrientConstraint, OptimizationRequest
+from llmn.optimizer.constraints import ConstraintBuilder, load_profile_from_yaml
+from llmn.optimizer.models import NutrientConstraint, OptimizationRequest
 
 
 class TestConstraintBuilder:

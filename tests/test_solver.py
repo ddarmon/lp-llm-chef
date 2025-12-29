@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mealplan.optimizer.models import NutrientConstraint, OptimizationRequest
-from mealplan.optimizer.solver import solve_diet_problem, solve_lp, solve_qp
+from llmn.optimizer.models import NutrientConstraint, OptimizationRequest
+from llmn.optimizer.solver import solve_diet_problem, solve_lp, solve_qp
 
 
 class TestSolveLP:

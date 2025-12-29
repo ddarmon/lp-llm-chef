@@ -12,7 +12,7 @@ This skill creates meal plans with per-meal constraints, ensuring balanced distr
 **Consider template-based first** (`--template --pattern X`):
 - Produces more realistic meals (1 protein + 1 legume + vegetables per meal)
 - Different foods at each meal by design
-- Simpler to use: `uv run mealplan optimize --pattern pescatarian --template --json`
+- Simpler to use: `uv run llmn optimize --pattern pescatarian --template --json`
 
 **Use multi-period when**:
 - You need exact per-meal calorie/protein control (e.g., "exactly 500-550 kcal at breakfast")
@@ -33,7 +33,7 @@ Use multi-period optimization when:
 For basic multi-period optimization with auto-derived meal targets:
 
 ```bash
-uv run mealplan optimize --multiperiod --json
+uv run llmn optimize --multiperiod --json
 ```
 
 This uses default splits: Breakfast 25%, Lunch 35%, Dinner 35%, Snack 5%.
@@ -160,7 +160,7 @@ food_meal_rules:
 ### Step 6: Run Optimization
 
 ```bash
-uv run mealplan optimize --file /tmp/multiperiod_profile.yaml --json
+uv run llmn optimize --file /tmp/multiperiod_profile.yaml --json
 ```
 
 ### Step 7: Present Results
@@ -270,16 +270,16 @@ meals:
 
 ```bash
 # Quick multi-period with auto-derived targets
-uv run mealplan optimize --multiperiod --json
+uv run llmn optimize --multiperiod --json
 
 # Multi-period with custom profile
-uv run mealplan optimize --file /tmp/multiperiod_profile.yaml --json
+uv run llmn optimize --file /tmp/multiperiod_profile.yaml --json
 
 # With verbose output (shows constraint matrices)
-uv run mealplan optimize --file /tmp/multiperiod_profile.yaml --verbose
+uv run llmn optimize --file /tmp/multiperiod_profile.yaml --verbose
 
 # With explicit food IDs (bypass tag filtering)
-uv run mealplan optimize --multiperiod --foods 175167,171287,172421 --json
+uv run llmn optimize --multiperiod --foods 175167,171287,172421 --json
 ```
 
 ## Tips

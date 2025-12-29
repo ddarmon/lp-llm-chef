@@ -13,7 +13,7 @@ This skill takes optimization results and creates practical meal plans with reci
 
 ```bash
 # Run template-based optimization first
-uv run mealplan optimize --pattern pescatarian --pattern slow_carb --template --json
+uv run llmn optimize --pattern pescatarian --pattern slow_carb --template --json
 ```
 
 This gives you:
@@ -32,15 +32,15 @@ Check if there's a recent optimization run:
 
 ```bash
 # List recent optimization runs
-uv run mealplan explore runs --limit 5 --json
+uv run llmn explore runs --limit 5 --json
 ```
 
-If no recent runs, suggest running `/mealplan` or `/multiperiod` first.
+If no recent runs, suggest running `/llmn` or `/multiperiod` first.
 
 To use a specific run:
 ```bash
 # Get details of a specific run
-uv run mealplan explore runs --json
+uv run llmn explore runs --json
 # Look at run_id in the output
 ```
 
@@ -50,13 +50,13 @@ Export the optimization results in a format suitable for recipe generation:
 
 ```bash
 # Export latest run for LLM recipe generation
-uv run mealplan export-for-llm latest
+uv run llmn export-for-llm latest
 
 # Or export with specific number of days
-uv run mealplan export-for-llm latest --days 7
+uv run llmn export-for-llm latest --days 7
 
 # Export to a file
-uv run mealplan export-for-llm latest --days 7 --output /tmp/meal_prompt.md
+uv run llmn export-for-llm latest --days 7 --output /tmp/meal_prompt.md
 ```
 
 ### Step 3: Gather User Preferences
@@ -100,7 +100,7 @@ Ask the user about their cooking preferences:
 
 Option A: **Generate a prompt** (user will paste elsewhere)
 ```bash
-uv run mealplan export-for-llm latest --days 7
+uv run llmn export-for-llm latest --days 7
 ```
 
 Then combine with user preferences to create a detailed prompt.
@@ -244,22 +244,22 @@ WEEKDAY ASSEMBLY (5-10 min):
 
 ```bash
 # List recent optimization runs
-uv run mealplan explore runs --limit 10 --json
+uv run llmn explore runs --limit 10 --json
 
 # Export latest run for recipes
-uv run mealplan export-for-llm latest
+uv run llmn export-for-llm latest
 
 # Export specific run
-uv run mealplan export-for-llm <run_id>
+uv run llmn export-for-llm <run_id>
 
 # Export with day count
-uv run mealplan export-for-llm latest --days 7
+uv run llmn export-for-llm latest --days 7
 
 # Export to file
-uv run mealplan export-for-llm latest --output /tmp/recipes.md
+uv run llmn export-for-llm latest --output /tmp/recipes.md
 
 # Get optimization details (for macro breakdown)
-uv run mealplan explore runs --json
+uv run llmn explore runs --json
 ```
 
 ## Example Output
