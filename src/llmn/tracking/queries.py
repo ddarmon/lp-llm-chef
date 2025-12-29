@@ -24,8 +24,9 @@ class UserQueries:
         cursor = conn.execute(
             """
             INSERT INTO user_profiles (age, sex, height_inches, weight_lbs,
-                                       activity_level, goal, target_weight_lbs)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                                       activity_level, goal, target_weight_lbs,
+                                       diet_type, diet_style)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 profile.age,
@@ -35,6 +36,8 @@ class UserQueries:
                 profile.activity_level,
                 profile.goal,
                 profile.target_weight_lbs,
+                profile.diet_type,
+                profile.diet_style,
             ),
         )
         conn.commit()
@@ -46,7 +49,8 @@ class UserQueries:
         row = conn.execute(
             """
             SELECT user_id, age, sex, height_inches, weight_lbs,
-                   activity_level, goal, target_weight_lbs, created_at
+                   activity_level, goal, target_weight_lbs,
+                   diet_type, diet_style, created_at
             FROM user_profiles WHERE user_id = ?
             """,
             (user_id,),
@@ -64,7 +68,9 @@ class UserQueries:
             activity_level=row[5],
             goal=row[6],
             target_weight_lbs=row[7],
-            created_at=datetime.fromisoformat(row[8]) if row[8] else None,
+            diet_type=row[8],
+            diet_style=row[9],
+            created_at=datetime.fromisoformat(row[10]) if row[10] else None,
         )
 
     @staticmethod
@@ -73,7 +79,8 @@ class UserQueries:
         row = conn.execute(
             """
             SELECT user_id, age, sex, height_inches, weight_lbs,
-                   activity_level, goal, target_weight_lbs, created_at
+                   activity_level, goal, target_weight_lbs,
+                   diet_type, diet_style, created_at
             FROM user_profiles ORDER BY user_id LIMIT 1
             """
         ).fetchone()
@@ -90,7 +97,9 @@ class UserQueries:
             activity_level=row[5],
             goal=row[6],
             target_weight_lbs=row[7],
-            created_at=datetime.fromisoformat(row[8]) if row[8] else None,
+            diet_type=row[8],
+            diet_style=row[9],
+            created_at=datetime.fromisoformat(row[10]) if row[10] else None,
         )
 
     @staticmethod
@@ -103,7 +112,8 @@ class UserQueries:
             """
             UPDATE user_profiles
             SET age = ?, sex = ?, height_inches = ?, weight_lbs = ?,
-                activity_level = ?, goal = ?, target_weight_lbs = ?
+                activity_level = ?, goal = ?, target_weight_lbs = ?,
+                diet_type = ?, diet_style = ?
             WHERE user_id = ?
             """,
             (
@@ -114,6 +124,8 @@ class UserQueries:
                 profile.activity_level,
                 profile.goal,
                 profile.target_weight_lbs,
+                profile.diet_type,
+                profile.diet_style,
                 profile.user_id,
             ),
         )
