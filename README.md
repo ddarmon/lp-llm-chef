@@ -2,10 +2,15 @@
 
 **llmn** (pronounced "lemon") = **LLM** + **N**utrition
 
-A diet optimization tool designed for both humans and AI agents. Uses
-quadratic programming to find diverse food combinations satisfying
-nutritional constraints, with first-class support for LLM tool use
-(Claude Code, Codex CLI, etc.).
+Diet optimization and weight tracking for humans and AI agents.
+
+- **Meal planning**: Quadratic programming finds diverse food combinations
+  meeting calorie/macro/micro targets
+- **Weight tracking**: Hacker's Diet-style EMA smoothing filters daily noise
+- **Adaptive TDEE**: Kalman filter learns your true metabolism from weight
+  observations, improving on generic formulas
+- **LLM-first**: All commands support `--json` for tool use with Claude Code,
+  Codex CLI, etc.
 
 ## Features
 

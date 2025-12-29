@@ -7,9 +7,14 @@ with code in this repository.
 
 **llmn** (pronounced "lemon") = **LLM** + **N**utrition
 
-A diet optimization tool designed for both humans and AI agents. Uses
-quadratic programming (QP) to find diverse food combinations satisfying
-nutritional constraints, with USDA FoodData Central as its nutrition database.
+Diet optimization and weight tracking for humans and AI agents:
+
+- **Meal planning**: QP finds diverse food combinations meeting nutritional targets
+- **Weight tracking**: Hacker's Diet-style EMA smoothing
+- **Adaptive TDEE**: Kalman filter learns your true metabolism over time
+- **LLM-first**: All commands support `--json` for agentic tool use
+
+Uses USDA FoodData Central as its nutrition database.
 
 **Key capability**: All CLI commands support `--json` output with a
 structured response envelope, making this tool usable by Claude Code,
