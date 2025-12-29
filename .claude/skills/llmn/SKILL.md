@@ -21,7 +21,31 @@ Choose the right mode based on user needs:
 
 ## Workflow
 
+### Step 0: Check for Existing User Profile
+
+Before gathering goals, check if the user has an existing profile:
+
+```bash
+uv run llmn user show --json
+```
+
+**If profile exists with goal set** (e.g., `goal: "fat_loss:185:165"`):
+- Extract current weight and target weight from the goal
+- Offer to use stored targets: "I see you have a profile for fat loss (185 lbs → 165 lbs). Should I use those targets?"
+- If user agrees, skip to Step 2 and use `--use-profile` flag in Step 4
+- If user wants different targets, continue to Step 1
+
+**If profile exists without goal:**
+- Use profile's age, sex, height, weight, activity for calculations
+- Ask only about goal type and calorie/protein targets
+
+**If no profile exists:**
+- Continue to Step 1 to gather all information
+- After optimization, suggest creating a profile: `llmn user create`
+
 ### Step 1: Gather User Goals
+
+**IMPORTANT: Always confirm calorie and protein targets with the user BEFORE running any optimization.**
 
 Ask the user about their dietary goals. Use the AskUserQuestion tool to collect:
 
@@ -109,15 +133,21 @@ For low-carb diets, add:
 # Map diet style to additional pattern
 # - Slow-carb → --pattern slow_carb
 # - Low-carb/Keto → --pattern keto
+```
 
-# Example: Pescatarian + Slow-carb
-uv run llmn optimize --pattern pescatarian --pattern slow_carb --template --json
+**If user has a profile with goal set (from Step 0):**
+```bash
+# Use --use-profile to auto-derive calorie/protein targets from stored user data
+uv run llmn optimize --pattern pescatarian --template --use-profile --json
+```
 
-# With goal-based targets
+**If no profile or user wants custom targets:**
+```bash
+# Use explicit --goal flag with weight info
 uv run llmn optimize --pattern pescatarian --template --goal "fat_loss:185lbs:165lbs" --json
 ```
 
-**Alternative: Profile-based optimization** (more control):
+**Alternative: YAML profile-based optimization** (most control):
 
 ```bash
 uv run llmn optimize --file /tmp/llmn_profile.yaml --json

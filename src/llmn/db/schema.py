@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     activity_level TEXT CHECK(activity_level IN ('sedentary', 'lightly_active', 'moderate', 'active', 'very_active')),
     goal TEXT,
     target_weight_lbs REAL,
+    diet_type TEXT CHECK(diet_type IN ('omnivore', 'pescatarian', 'vegetarian', 'vegan') OR diet_type IS NULL),
+    diet_style TEXT CHECK(diet_style IN ('standard', 'slow_carb', 'low_carb', 'keto', 'mediterranean', 'paleo') OR diet_style IS NULL),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -148,3 +150,43 @@ CREATE INDEX IF NOT EXISTS idx_tdee_estimates_user_date ON tdee_estimates(user_i
 def get_schema_sql() -> str:
     """Return the complete schema SQL."""
     return SCHEMA_SQL
+
+
+def migrate_user_profiles_add_diet_columns(conn) -> bool:
+    """
+    Add diet_type and diet_style columns to user_profiles if they don't exist.
+
+    This is a migration for existing databases that were created before
+    these columns were added to the schema.
+
+    Returns True if migration was performed, False if columns already existed.
+    """
+    import sqlite3
+
+    cursor = conn.execute("PRAGMA table_info(user_profiles)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    migrated = False
+
+    if "diet_type" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE user_profiles
+            ADD COLUMN diet_type TEXT CHECK(diet_type IN ('omnivore', 'pescatarian', 'vegetarian', 'vegan') OR diet_type IS NULL)
+            """
+        )
+        migrated = True
+
+    if "diet_style" not in columns:
+        conn.execute(
+            """
+            ALTER TABLE user_profiles
+            ADD COLUMN diet_style TEXT CHECK(diet_style IN ('standard', 'slow_carb', 'low_carb', 'keto', 'mediterranean', 'paleo') OR diet_style IS NULL)
+            """
+        )
+        migrated = True
+
+    if migrated:
+        conn.commit()
+
+    return migrated

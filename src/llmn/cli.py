@@ -74,8 +74,14 @@ def output_json(response: dict, file=None) -> None:
 
 def ensure_tracking_tables() -> None:
     """Ensure tracking tables exist (idempotent)."""
+    from llmn.db.schema import migrate_user_profiles_add_diet_columns
+
     db = get_db()
     db.initialize_schema()
+
+    # Run migrations for existing databases
+    with db.get_connection() as conn:
+        migrate_user_profiles_add_diet_columns(conn)
 
 
 def require_food_data() -> None:
@@ -426,6 +432,9 @@ def optimize(
     seed: Optional[int] = typer.Option(
         None, "--seed", help="Random seed for template-based selection (for reproducibility)"
     ),
+    use_profile: bool = typer.Option(
+        False, "--use-profile", help="Use user profile data for calorie/protein targets (requires profile with goal set)"
+    ),
 ) -> None:
     """Run meal plan optimization."""
     require_food_data()
@@ -565,6 +574,127 @@ def optimize(
                 console.print(f"[red]Invalid --foods format: {foods}[/red]")
                 console.print("[red]Use comma-separated numeric FDC IDs, e.g., --foods 175167,171287,172421[/red]")
             raise typer.Exit(1)
+
+    # Mutual exclusivity: --use-profile and --goal cannot be used together
+    if use_profile and goal:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "optimize",
+                "errors": ["Cannot use both --use-profile and --goal"],
+                "suggestions": [
+                    "Use --use-profile to auto-derive targets from your stored user profile",
+                    "Or use --goal to specify targets directly (e.g., --goal fat_loss:185lbs:165lbs)",
+                ],
+            })
+        else:
+            console.print("[red]Cannot use both --use-profile and --goal[/red]")
+            console.print("Use --use-profile to auto-derive targets from your stored user profile")
+            console.print("Or use --goal to specify targets directly")
+        raise typer.Exit(1)
+
+    # Handle --use-profile flag to auto-derive targets from user profile
+    if use_profile:
+        from llmn.tracking.queries import UserQueries
+        from llmn.profiles.body_calc import calculate_targets, parse_goal_string
+        from llmn.optimizer.models import NutrientConstraint
+        from llmn.data.nutrient_ids import NUTRIENT_IDS
+
+        with db.get_connection() as conn:
+            user_profile = UserQueries.get_default_user(conn)
+
+        if user_profile is None:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "optimize",
+                    "errors": ["No user profile found"],
+                    "suggestions": [
+                        "Create a profile with: llmn user create --age 35 --sex male --height 70 --weight 180 --activity moderate",
+                        "Then set a goal with: llmn user update --goal 'fat_loss:180:165'",
+                        "Or use --goal flag instead of --use-profile",
+                    ],
+                })
+            else:
+                console.print("[red]No user profile found[/red]")
+                console.print("Create one with: llmn user create --age 35 --sex male --height 70 --weight 180 --activity moderate")
+            raise typer.Exit(1)
+
+        if user_profile.goal is None:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "optimize",
+                    "errors": ["User profile exists but has no goal set"],
+                    "suggestions": [
+                        f"Set a goal with: llmn user update --goal 'fat_loss:{user_profile.weight_lbs:.0f}:TARGET_WEIGHT'",
+                        "Or use --goal flag instead of --use-profile",
+                    ],
+                })
+            else:
+                console.print("[red]User profile exists but has no goal set[/red]")
+                console.print(f"Set a goal with: llmn user update --goal 'fat_loss:{user_profile.weight_lbs:.0f}:TARGET_WEIGHT'")
+            raise typer.Exit(1)
+
+        # Parse goal from profile
+        try:
+            parsed = parse_goal_string(user_profile.goal)
+            goal_type = parsed["goal"]
+        except (ValueError, KeyError) as e:
+            if json_output:
+                output_json({
+                    "success": False,
+                    "command": "optimize",
+                    "errors": [f"Invalid goal format in user profile: {user_profile.goal}. Error: {e}"],
+                    "suggestions": [
+                        "Update goal with: llmn user update --goal 'fat_loss:CURRENT_WEIGHT:TARGET_WEIGHT'",
+                    ],
+                })
+            else:
+                console.print(f"[red]Invalid goal format in user profile: {user_profile.goal}[/red]")
+            raise typer.Exit(1)
+
+        # Calculate targets using ACTUAL profile data
+        targets = calculate_targets(
+            age=user_profile.age,
+            sex=user_profile.sex,
+            height_inches=user_profile.height_inches,
+            weight_lbs=user_profile.weight_lbs,
+            goal=goal_type,
+            target_weight_lbs=user_profile.target_weight_lbs,
+            activity_level=user_profile.activity_level,
+        )
+
+        # Update request with calculated targets
+        request.calorie_range = (targets.calories_min, targets.calories_max)
+
+        # Add protein constraint
+        protein_constraint = NutrientConstraint(
+            nutrient_id=NUTRIENT_IDS["protein"],
+            min_value=float(targets.protein_min),
+            max_value=float(targets.protein_max),
+        )
+        request.nutrient_constraints = list(request.nutrient_constraints) + [protein_constraint]
+
+        # Update mp_request if it was already created
+        if mp_request is not None:
+            mp_request.daily_calorie_range = (targets.calories_min, targets.calories_max)
+            mp_request.daily_nutrient_constraints = list(request.nutrient_constraints)
+            # Regenerate meal configs with new calorie range
+            meal_configs = derive_default_meal_configs(
+                (targets.calories_min, targets.calories_max),
+                request.nutrient_constraints
+            )
+            mp_request.meals = meal_configs
+
+        if not json_output:
+            console.print(f"[dim]Using profile: {user_profile.sex}, {user_profile.age}y, "
+                        f"{user_profile.height_inches}in, {user_profile.weight_lbs}lbs, "
+                        f"{user_profile.activity_level}[/dim]")
+            console.print(f"[dim]Goal '{goal_type}': {targets.calories_min}-{targets.calories_max} kcal, "
+                        f"{targets.protein_min}-{targets.protein_max}g protein[/dim]")
+            if targets.projected_weeks:
+                console.print(f"[dim]Projected timeline: {targets.projected_weeks} weeks[/dim]")
 
     # Handle --goal flag for body composition targets
     if goal:
@@ -3024,6 +3154,8 @@ def user_show(
                 "activity_level": profile.activity_level,
                 "goal": profile.goal,
                 "target_weight_lbs": profile.target_weight_lbs,
+                "diet_type": profile.diet_type,
+                "diet_style": profile.diet_style,
             },
             "human_summary": f"User {profile.user_id}: {profile.sex}, {profile.age}y, {profile.height_inches}in, {profile.weight_lbs}lbs",
         })
@@ -3038,6 +3170,10 @@ def user_show(
             console.print(f"  Goal: {profile.goal}")
         if profile.target_weight_lbs:
             console.print(f"  Target weight: {profile.target_weight_lbs} lbs")
+        if profile.diet_type:
+            console.print(f"  Diet type: {profile.diet_type}")
+        if profile.diet_style:
+            console.print(f"  Diet style: {profile.diet_style}")
 
 
 @user_app.command("update")
@@ -3046,10 +3182,44 @@ def user_update(
     weight: Optional[float] = typer.Option(None, "--weight", help="Update current weight"),
     goal: Optional[str] = typer.Option(None, "--goal", help="Update goal"),
     activity: Optional[str] = typer.Option(None, "--activity", help="Update activity level"),
+    diet_type: Optional[str] = typer.Option(
+        None, "--diet-type", help="Diet type (omnivore/pescatarian/vegetarian/vegan)"
+    ),
+    diet_style: Optional[str] = typer.Option(
+        None, "--diet-style", help="Diet style (standard/slow_carb/low_carb/keto/mediterranean/paleo)"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Update user profile."""
     from llmn.tracking.queries import UserQueries
+    from llmn.tracking.models import VALID_DIET_TYPES, VALID_DIET_STYLES
+
+    # Validate diet_type and diet_style before querying database
+    if diet_type is not None and diet_type not in VALID_DIET_TYPES:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "user update",
+                "errors": [f"Invalid diet type: {diet_type}"],
+                "suggestions": [f"Valid options: {', '.join(VALID_DIET_TYPES)}"],
+            })
+        else:
+            console.print(f"[red]Invalid diet type: {diet_type}[/red]")
+            console.print(f"Valid options: {', '.join(VALID_DIET_TYPES)}")
+        raise typer.Exit(1)
+
+    if diet_style is not None and diet_style not in VALID_DIET_STYLES:
+        if json_output:
+            output_json({
+                "success": False,
+                "command": "user update",
+                "errors": [f"Invalid diet style: {diet_style}"],
+                "suggestions": [f"Valid options: {', '.join(VALID_DIET_STYLES)}"],
+            })
+        else:
+            console.print(f"[red]Invalid diet style: {diet_style}[/red]")
+            console.print(f"Valid options: {', '.join(VALID_DIET_STYLES)}")
+        raise typer.Exit(1)
 
     db = get_db()
     with db.get_connection() as conn:
@@ -3084,6 +3254,10 @@ def user_update(
                         profile.target_weight_lbs = float(parts[2])
                     except ValueError:
                         pass
+        if diet_type is not None:
+            profile.diet_type = diet_type
+        if diet_style is not None:
+            profile.diet_style = diet_style
 
         UserQueries.update_user(conn, profile)
 
