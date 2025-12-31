@@ -12,6 +12,12 @@ The filter is updated weekly based on:
 If you're losing weight faster than expected given your planned intake,
 the filter infers your TDEE is higher than Mifflin-St Jeor predicts
 (positive bias). If slower, TDEE is lower (negative bias).
+
+Missing data handling:
+- Process noise scales with elapsed days (handles irregular weigh-ins)
+- Observation noise scales inversely with calorie log coverage
+  (fewer logged days → more uncertainty)
+- Variance is capped to prevent divergence after long gaps
 """
 
 from __future__ import annotations
@@ -19,6 +25,13 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+# Maximum variance to prevent divergence after long gaps (200 kcal/day std)
+MAX_VARIANCE = 40000.0
+
+# Minimum calorie coverage to avoid extreme noise scaling
+MIN_CALORIE_COVERAGE = 0.3
 
 
 @dataclass
@@ -34,7 +47,7 @@ class TDEEFilter:
         bias: Current TDEE bias estimate (kcal/day)
         variance: Current uncertainty (kcal²/day²)
         process_noise: Random walk variance per day (default: 25 = 5² kcal/day)
-        obs_noise: Observation noise variance (default: 22500 = 150² kcal/day)
+        obs_noise: Base observation noise variance (default: 22500 = 150² kcal/day)
     """
 
     bias: float = 0.0
@@ -46,12 +59,21 @@ class TDEEFilter:
         """
         Predict step: increase uncertainty due to process noise.
 
+        Variance grows with elapsed time (random walk model) but is capped
+        to prevent divergence after very long gaps.
+
         Args:
             days: Number of days since last update (typically 7)
         """
         self.variance += self.process_noise * days
+        self.variance = min(self.variance, MAX_VARIANCE)
 
-    def update(self, implied_deficit: float, expected_deficit: float) -> float:
+    def update(
+        self,
+        implied_deficit: float,
+        expected_deficit: float,
+        calorie_coverage: float = 1.0,
+    ) -> float:
         """
         Update step: incorporate new observation.
 
@@ -64,6 +86,8 @@ class TDEEFilter:
                             = (trend_start - trend_end) × 3500 / days
             expected_deficit: Expected deficit from meal plan
                             = mifflin_tdee - planned_calories
+            calorie_coverage: Fraction of days with calorie logs (0-1).
+                             Lower coverage → higher observation noise.
 
         Returns:
             Residual (z - x_predicted). Positive means observed deficit
@@ -76,8 +100,13 @@ class TDEEFilter:
         # Innovation (residual): difference between measurement and predicted state
         residual = z - self.bias
 
-        # Kalman gain
-        kalman_gain = self.variance / (self.variance + self.obs_noise)
+        # Scale observation noise by calorie coverage
+        # Fewer logged days → more uncertainty about actual intake
+        effective_coverage = max(calorie_coverage, MIN_CALORIE_COVERAGE)
+        adjusted_obs_noise = self.obs_noise / effective_coverage
+
+        # Kalman gain (using adjusted noise)
+        kalman_gain = self.variance / (self.variance + adjusted_obs_noise)
 
         # Update state: x += K * (z - x)
         self.bias += kalman_gain * residual
@@ -92,6 +121,7 @@ class TDEEFilter:
         implied_deficit: float,
         expected_deficit: float,
         days: int = 7,
+        calorie_coverage: float = 1.0,
     ) -> float:
         """
         Combined predict + update step for weekly observations.
@@ -100,12 +130,13 @@ class TDEEFilter:
             implied_deficit: Observed deficit from trend change
             expected_deficit: Expected deficit from plan
             days: Days since last observation
+            calorie_coverage: Fraction of days with calorie logs (0-1)
 
         Returns:
             Innovation value
         """
         self.predict(days)
-        return self.update(implied_deficit, expected_deficit)
+        return self.update(implied_deficit, expected_deficit, calorie_coverage)
 
     def get_adjusted_tdee(self, mifflin_tdee: float) -> tuple[float, float]:
         """
