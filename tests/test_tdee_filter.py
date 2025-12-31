@@ -6,7 +6,12 @@ import random
 
 import pytest
 
-from llmn.tracking.tdee_filter import TDEEFilter, run_filter_on_history
+from llmn.tracking.tdee_filter import (
+    MAX_VARIANCE,
+    MIN_CALORIE_COVERAGE,
+    TDEEFilter,
+    run_filter_on_history,
+)
 
 
 class TestTDEEFilter:
@@ -99,6 +104,73 @@ class TestTDEEFilter:
 
         expected_increase = tdee_filter.process_noise * 7
         assert abs(tdee_filter.variance - (initial_variance + expected_increase)) < 0.01
+
+    def test_variance_capped_after_long_gap(self) -> None:
+        """Variance should be capped at MAX_VARIANCE after very long gaps."""
+        tdee_filter = TDEEFilter()
+
+        # Need (40000 - 10000) / 25 = 1200+ days to hit cap
+        tdee_filter.predict(days=1500)
+
+        assert tdee_filter.variance == MAX_VARIANCE
+
+    def test_variance_capping_preserves_normal_growth(self) -> None:
+        """Normal gaps should not hit the cap."""
+        tdee_filter = TDEEFilter()
+
+        # 7 days should not hit the cap
+        tdee_filter.predict(days=7)
+        expected = 10000.0 + 25.0 * 7  # 10175
+        assert tdee_filter.variance == pytest.approx(expected)
+        assert tdee_filter.variance < MAX_VARIANCE
+
+    def test_calorie_coverage_increases_obs_noise(self) -> None:
+        """Lower calorie coverage should increase effective observation noise."""
+        filter_full = TDEEFilter()
+        filter_half = TDEEFilter()
+
+        # Same measurement, different coverage
+        filter_full.predict(days=7)
+        filter_half.predict(days=7)
+
+        filter_full.update(
+            implied_deficit=500,
+            expected_deficit=500,
+            calorie_coverage=1.0,
+        )
+        filter_half.update(
+            implied_deficit=500,
+            expected_deficit=500,
+            calorie_coverage=0.5,
+        )
+
+        # With lower coverage, Kalman gain should be lower (less trust in obs)
+        # so variance should decrease less
+        assert filter_half.variance > filter_full.variance
+
+    def test_calorie_coverage_minimum(self) -> None:
+        """Coverage below MIN_CALORIE_COVERAGE should be clamped."""
+        filter_low = TDEEFilter()
+        filter_min = TDEEFilter()
+
+        filter_low.predict(days=7)
+        filter_min.predict(days=7)
+
+        # Very low coverage should be same as MIN_CALORIE_COVERAGE
+        filter_low.update(
+            implied_deficit=500,
+            expected_deficit=500,
+            calorie_coverage=0.1,  # Below minimum
+        )
+        filter_min.update(
+            implied_deficit=500,
+            expected_deficit=500,
+            calorie_coverage=MIN_CALORIE_COVERAGE,
+        )
+
+        # Should be identical (clamped)
+        assert filter_low.variance == pytest.approx(filter_min.variance)
+        assert filter_low.bias == pytest.approx(filter_min.bias)
 
     def test_obs_noise_default(self) -> None:
         """Default obs_noise should be 22500 (150 kcal/day std)."""
