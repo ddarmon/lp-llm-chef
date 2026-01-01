@@ -12,6 +12,8 @@ Diet optimization and weight tracking for humans and AI agents.
 - **LLM-first**: All commands support `--json` for tool use with Claude Code,
   Codex CLI, etc.
 
+![CLI Help](docs/images/cli-help.png)
+
 ## Features
 
 -   **Nutritional optimization**: Specify calorie targets, macro/micro
@@ -145,11 +147,22 @@ feasibility mode, all foods in the database are eligible.
 
 ``` bash
 # Search for a food
-uv run llmn search "chicken breast"
-# Found: 171077 - Chicken, broilers or fryers, breast, skinless, boneless...
+uv run llmn search salmon
+```
 
+![Food Search](docs/images/search-results.png)
+
+Use `llmn info <fdc_id>` to see detailed nutrient information:
+
+``` bash
+uv run llmn info 175167
+```
+
+![Food Info](docs/images/food-info.png)
+
+``` bash
 # Add price (per 100g)
-uv run llmn prices add 171077 0.80 --source costco
+uv run llmn prices add 175167 1.20 --source costco
 
 # Or import from CSV
 uv run llmn prices import my_prices.csv
@@ -162,7 +175,7 @@ Price CSV format:
 
 ``` csv
 fdc_id,price_per_100g,price_source,notes
-171077,0.80,costco,chicken breast bulk
+175167,1.20,costco,salmon fillet
 170148,0.15,costco,brown rice
 ```
 
@@ -343,6 +356,8 @@ All commands should be prefixed with `uv run` when using `uv` as the project man
 | `llmn tdee estimate` | Run Kalman filter to estimate personalized TDEE |
 | `llmn tdee progress` | Show weight/TDEE progress report |
 
+![TDEE Progress](docs/images/tdee-progress.png)
+
 ## Advanced LLM Features
 
 These features are designed for LLM agents doing iterative diet optimization.
@@ -381,6 +396,8 @@ to distribute the optimization result into meal slots.
 
 For realistic meals that look like what humans actually eat:
 
+![Template Optimization](docs/images/template-optimization.png)
+
 ``` bash
 # Template-based optimization (recommended)
 uv run llmn optimize --pattern pescatarian --pattern slow_carb --template
@@ -391,13 +408,13 @@ uv run llmn optimize --pattern pescatarian --template --seed 42
 # Available patterns: pescatarian, vegetarian, vegan, keto, mediterranean, paleo, slow_carb
 ```
 
-This produces meals with proper structure:
-- **Breakfast**: Eggs 150g, Edamame 100g, Kale 100g
-- **Lunch**: Cod 235g, Kidney beans 216g, Zucchini 161g
-- **Dinner**: Salmon 170g, Lentils 113g, Carrots 149g
-- **Snack**: Peanuts 30g
+This produces meals with proper structure (as shown above):
+- **Breakfast**: Eggs 147g, Quinoa 94g, Kale 74g
+- **Lunch**: Cod 230g, Black beans 212g, Green beans 170g, Zucchini 160g
+- **Dinner**: Salmon 175g, Quinoa 125g, Carrots 150g, Onions 150g
+- **Snack**: Almonds 34g
 
-Instead of the Stigler-style output (all vegetables, identical meals).
+Instead of the Stigler-style output (spreading across many foods, identical meals).
 
 ### Multi-Period Optimization (Per-Meal Constraints)
 
