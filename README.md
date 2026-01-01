@@ -356,8 +356,6 @@ All commands should be prefixed with `uv run` when using `uv` as the project man
 | `llmn tdee estimate` | Run Kalman filter to estimate personalized TDEE |
 | `llmn tdee progress` | Show weight/TDEE progress report |
 
-![TDEE Progress](docs/images/tdee-progress.png)
-
 ## Advanced LLM Features
 
 These features are designed for LLM agents doing iterative diet optimization.
